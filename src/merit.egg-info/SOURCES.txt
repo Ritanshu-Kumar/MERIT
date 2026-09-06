@@ -1,0 +1,10 @@
+LICENSE
+README.md
+pyproject.toml
+src/merit/__init__.py
+src/merit.egg-info/PKG-INFO
+src/merit.egg-info/SOURCES.txt
+src/merit.egg-info/dependency_links.txt
+src/merit.egg-info/requires.txt
+src/merit.egg-info/top_level.txt
+tests/test_smoke.py

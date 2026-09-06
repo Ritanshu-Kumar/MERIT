@@ -1,0 +1,33 @@
+project:
+  name: MERIT
+  version: "0.1.0"
+
+universe:
+  tier: T0
+  symbols:
+    - AAPL
+
+data:
+  asset_class: us_equities
+  feed_type: mbp10
+  source: TBD
+  venue: TBD
+
+simulation:
+  starting_cash: 100000.00
+  seed: 42
+
+strategy:
+  name: baseline_market_maker
+  order_size: 100
+  quote_spread_bps: 10
+
+risk:
+  max_position_per_symbol: 500
+  max_order_size: 100
+  max_gross_exposure: 50000.00
+
+reporting:
+  enabled: true
+  trade_ledger: true
+  portfolio_summary: true
