@@ -127,3 +127,35 @@ class SystemEvent(NormalizedMarketEvent):
             raise ValueError("SystemEvent must use SYSTEM event type")
         if not self.code:
             raise ValueError("code cannot be empty")
+
+@dataclass(frozen=True)
+class StockDirectoryEvent(NormalizedMarketEvent):
+    stock_locate: int
+    market_category: str
+    financial_status: str
+    round_lot_size: int
+
+    def __post_init__(self) -> None:
+        if self.event_type != MarketEventType.SYSTEM:
+            raise ValueError("StockDirectoryEvent must use SYSTEM event type")
+        if self.stock_locate <= 0:
+            raise ValueError("stock_locate must be positive")
+        if not self.symbol:
+            raise ValueError("symbol cannot be empty")
+        if self.round_lot_size <= 0:
+            raise ValueError("round_lot_size must be positive")
+
+
+@dataclass(frozen=True)
+class TradingActionEvent(NormalizedMarketEvent):
+    stock_locate: int
+    trading_state: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.event_type != MarketEventType.SYSTEM:
+            raise ValueError("TradingActionEvent must use SYSTEM event type")
+        if self.stock_locate <= 0:
+            raise ValueError("stock_locate must be positive")
+        if self.trading_state not in {"H", "P", "Q", "T"}:
+            raise ValueError("invalid trading state")

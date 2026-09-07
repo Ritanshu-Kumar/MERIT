@@ -10,7 +10,10 @@ from merit.data.normalized import (
     OrderDeleteEvent,
     OrderExecuteEvent,
     OrderReplaceEvent,
+    StockDirectoryEvent,
+    SystemEvent,
     TradeEvent,
+    TradingActionEvent,
 )
 
 
@@ -78,6 +81,9 @@ class ITCHDecoder:
         | OrderDeleteEvent
         | OrderReplaceEvent
         | TradeEvent
+        | StockDirectoryEvent
+        | TradingActionEvent
+        | SystemEvent
         | None
     ):
         if not message:
@@ -105,6 +111,15 @@ class ITCHDecoder:
 
         if message_type == "P":
             return self._decode_trade(message)
+
+        if message_type == "S":
+            return self._decode_system(message)
+
+        if message_type == "R":
+            return self._decode_stock_directory(message)
+
+        if message_type == "H":
+            return self._decode_trading_action(message)
 
         return None
 
@@ -322,4 +337,70 @@ class ITCHDecoder:
             event_type=MarketEventType.TRADE,
             price=price,
             quantity=quantity,
+        )
+    def _decode_system(self, message: bytes) -> SystemEvent:
+        if len(message) != 12:
+            raise ITCHParseError(
+                f"Unexpected System Event length: {len(message)}"
+            )
+
+        timestamp = _read_timestamp(message)
+        code = chr(message[11])
+
+        return SystemEvent(
+            timestamp=_timestamp(timestamp, self.trading_date),
+            symbol="",
+            event_type=MarketEventType.SYSTEM,
+            code=code,
+        )
+
+    def _decode_stock_directory(
+        self,
+        message: bytes,
+    ) -> StockDirectoryEvent:
+        if len(message) != 39:
+            raise ITCHParseError(
+                f"Unexpected Stock Directory length: {len(message)}"
+            )
+
+        timestamp = _read_timestamp(message)
+        stock_locate = int.from_bytes(message[1:3], "big")
+        symbol = message[11:19].decode("ascii").strip()
+        market_category = chr(message[19])
+        financial_status = chr(message[20])
+        round_lot_size = _read_uint32(message, 21)
+
+        return StockDirectoryEvent(
+            timestamp=_timestamp(timestamp, self.trading_date),
+            symbol=symbol,
+            event_type=MarketEventType.SYSTEM,
+            stock_locate=stock_locate,
+            market_category=market_category,
+            financial_status=financial_status,
+            round_lot_size=round_lot_size,
+        )
+
+
+    def _decode_trading_action(
+        self,
+        message: bytes,
+    ) -> TradingActionEvent:
+        if len(message) != 25:
+            raise ITCHParseError(
+                f"Unexpected Trading Action length: {len(message)}"
+            )
+
+        timestamp = _read_timestamp(message)
+        stock_locate = int.from_bytes(message[1:3], "big")
+        symbol = message[11:19].decode("ascii").strip()
+        trading_state = chr(message[19])
+        reason = message[21:25].decode("ascii").strip()
+
+        return TradingActionEvent(
+            timestamp=_timestamp(timestamp, self.trading_date),
+            symbol=symbol,
+            event_type=MarketEventType.SYSTEM,
+            stock_locate=stock_locate,
+            trading_state=trading_state,
+            reason=reason,
         )
