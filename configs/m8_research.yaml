@@ -1,0 +1,93 @@
+experiment:
+  name: merit_m8_adverse_selection
+  version: 1
+
+hypothesis:
+  primary: >
+    Short-horizon microstructure state can identify passive quote
+    opportunities with different expected post-fill adverse selection,
+    and using that information can improve economic performance over
+    the frozen baseline market maker.
+
+target:
+  type: fill_conditional_signed_markout
+  horizons_ms:
+    - 100
+    - 1000
+    - 5000
+  reference_price: mid_price
+  sign_convention: >
+    Positive values indicate favorable post-fill movement and negative
+    values indicate adverse selection.
+  primary_target_horizon_ms: 1000
+
+features:
+  - mid_price
+  - spread
+  - relative_spread
+  - bid_size
+  - ask_size
+  - imbalance
+  - microprice
+  - imbalance_l5
+  - imbalance_l10
+  - weighted_imbalance_l5
+  - weighted_imbalance_l10
+
+quote_opportunity:
+  sides:
+    - BUY
+    - SELL
+  execution_model: merit_m7
+  hypothetical_passive_quote: true
+
+execution:
+  latency: frozen_by_m7
+  participation: frozen_by_m7
+  queue_model: frozen_by_m7
+  fees: frozen_by_m7
+
+baselines:
+  predictive:
+    name: zero_markout
+    prediction: 0
+  economic:
+    name: m5_baseline_market_maker
+
+evaluation:
+  split:
+    method: chronological
+    train_period: null
+    validation_period: null
+    test_period: null
+  purge_ms: 5000
+  embargo_ms: 5000
+
+metrics:
+  predictive:
+    - mean_markout
+    - median_markout
+    - directional_accuracy
+    - calibration
+  economic:
+    - net_pnl
+    - return_on_capital
+    - fill_rate
+    - realized_pnl
+    - fees
+    - inventory
+    - max_drawdown
+    - sharpe
+
+statistics:
+  dependence_correction: block_bootstrap
+  multiple_testing:
+    method: bonferroni
+    family:
+      horizons: true
+      symbols: true
+
+reproducibility:
+  random_seed: 42
+  data_provenance_required: true
+  no_test_peeking: true
