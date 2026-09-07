@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from merit.features.snapshot import FeatureSnapshot
 from merit.portfolio.models import Fill
+from merit.research.historical_fills import HistoricalFill
 from merit.research.targets import FillMarkout
 
 
@@ -35,7 +36,7 @@ class ResearchObservation:
 
 
 def build_research_observation(
-    fill: Fill,
+    fill: Fill | HistoricalFill,
     features: FeatureSnapshot,
     markout: FillMarkout,
 ) -> ResearchObservation:
@@ -49,11 +50,18 @@ def build_research_observation(
         if item.horizon in horizons:
             horizons[item.horizon] = item.value
 
+    if isinstance(fill, HistoricalFill):
+        fill_id = fill.execution_id
+        symbol = fill.opportunity.symbol
+    else:
+        fill_id = fill.fill_id
+        symbol = fill.symbol
+
     return ResearchObservation(
-        fill_id=fill.fill_id,
-        order_id=fill.order_id,
+        fill_id=fill_id,
+        order_id=str(fill.order_id),
         timestamp=fill.timestamp,
-        symbol=fill.symbol,
+        symbol=symbol,
         side=fill.side.value,
         quantity=fill.quantity,
         fill_price=fill.price,
