@@ -17,15 +17,18 @@ from merit.research.dataset import (
 from merit.research.fill_allocation import allocate_execution
 from merit.research.historical_fills import HistoricalFill
 from merit.research.opportunities import QuoteOpportunity
-from merit.research.targets import MidPricePoint, calculate_fill_markout
-
+from merit.research.targets import (
+    MidPriceIndex,
+    MidPricePoint,
+    build_mid_price_index,
+    calculate_fill_markout,
+)
 
 HORIZONS = (
     timedelta(milliseconds=100),
     timedelta(seconds=1),
     timedelta(seconds=5),
 )
-
 
 @dataclass(frozen=True)
 class LOBSTERState:
@@ -63,7 +66,9 @@ def build_feature_snapshot_from_book(
     mid_price = (bid_price + ask_price) / Decimal("2")
     spread = ask_price - bid_price
     relative_spread = (
-        spread / mid_price if mid_price else Decimal("0")
+        spread / mid_price
+        if mid_price
+        else Decimal("0")
     )
 
     total_size = bid_size + ask_size
@@ -86,10 +91,12 @@ def build_feature_snapshot_from_book(
 
     def imbalance_at_depth(levels: int) -> Decimal:
         bid_depth = sum(
-            quantity for _, quantity in bids[:levels]
+            quantity
+            for _, quantity in bids[:levels]
         )
         ask_depth = sum(
-            quantity for _, quantity in asks[:levels]
+            quantity
+            for _, quantity in asks[:levels]
         )
 
         total = bid_depth + ask_depth
@@ -97,30 +104,38 @@ def build_feature_snapshot_from_book(
         if total == 0:
             return Decimal("0")
 
-        return Decimal(bid_depth - ask_depth) / Decimal(total)
+        return Decimal(
+            bid_depth - ask_depth
+        ) / Decimal(total)
 
     def weighted_imbalance(levels: int) -> Decimal:
         bid_weighted = Decimal("0")
         ask_weighted = Decimal("0")
 
-        for index, (_, quantity) in enumerate(
+        for level, (_, quantity) in enumerate(
             bids[:levels],
             start=1,
         ):
-            bid_weighted += Decimal(quantity) / Decimal(index)
+            bid_weighted += (
+                Decimal(quantity) / Decimal(level)
+            )
 
-        for index, (_, quantity) in enumerate(
+        for level, (_, quantity) in enumerate(
             asks[:levels],
             start=1,
         ):
-            ask_weighted += Decimal(quantity) / Decimal(index)
+            ask_weighted += (
+                Decimal(quantity) / Decimal(level)
+            )
 
         total = bid_weighted + ask_weighted
 
         if total == 0:
             return Decimal("0")
 
-        return (bid_weighted - ask_weighted) / total
+        return (
+            bid_weighted - ask_weighted
+        ) / total
 
     return FeatureSnapshot(
         mid_price=mid_price,
@@ -145,7 +160,10 @@ def _build_states(
     ],
     symbol: str,
 ) -> tuple[LOBSTERState, ...]:
-    aligned_count = min(len(events), len(snapshots))
+    aligned_count = min(
+        len(events),
+        len(snapshots),
+    )
 
     states: list[LOBSTERState] = []
 
@@ -234,7 +252,11 @@ def build_lobster_research_dataset(
         if state.mid_price is not None
     )
 
-    observations: list[ResearchObservation] = []
+    mid_price_index: MidPriceIndex = build_mid_price_index(
+        mid_prices
+    )
+
+    pending_fills: list[HistoricalFill] = []
 
     for index in range(1, aligned_count):
         event = events[index]
@@ -280,7 +302,9 @@ def build_lobster_research_dataset(
             else previous_state.best_ask[1]
         )
 
-        queue_ahead = queue_model.estimate(visible_quantity)
+        queue_ahead = queue_model.estimate(
+            visible_quantity
+        )
 
         allocation = allocate_execution(
             quantity_ahead=queue_ahead.quantity_ahead,
@@ -297,31 +321,36 @@ def build_lobster_research_dataset(
 
         execution_id = f"{event.order_id}-{index}"
 
-        historical_fill = HistoricalFill(
-            opportunity=opportunity,
-            timestamp=event.timestamp,
-            side=OrderSide(side),
-            price=event.execution_price,
-            quantity=hypothetical_fill,
-            order_id=event.order_id,
-            execution_id=execution_id,
+        pending_fills.append(
+            HistoricalFill(
+                opportunity=opportunity,
+                timestamp=event.timestamp,
+                side=OrderSide(side),
+                price=event.execution_price,
+                quantity=hypothetical_fill,
+                order_id=event.order_id,
+                execution_id=execution_id,
+            )
         )
 
+    observations: list[ResearchObservation] = []
+
+    for fill in pending_fills:
         markout = calculate_fill_markout(
-            fill_timestamp=historical_fill.timestamp,
-            fill_price=historical_fill.price,
-            side=historical_fill.side,
-            mid_prices=mid_prices,
+            fill_timestamp=fill.timestamp,
+            fill_price=fill.price,
+            side=fill.side,
+            mid_price_index=mid_price_index,
             horizons=HORIZONS,
         )
 
-        observation = build_research_observation(
-            fill=historical_fill,
-            features=feature_snapshot,
-            markout=markout,
+        observations.append(
+            build_research_observation(
+                fill=fill,
+                features=fill.opportunity.features,
+                markout=markout,
+            )
         )
-
-        observations.append(observation)
 
         if (
             max_observations is not None

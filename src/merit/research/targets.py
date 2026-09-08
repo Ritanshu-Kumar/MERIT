@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -32,41 +35,89 @@ class FillMarkout:
     markouts: tuple[Markout, ...]
 
 
-def _future_mid_price(
-    points: tuple[MidPricePoint, ...],
-    target_time: datetime,
-) -> Decimal | None:
-    for point in points:
-        if point.timestamp >= target_time:
-            return point.mid_price
+@dataclass(frozen=True)
+class MidPriceIndex:
+    timestamps: tuple[datetime, ...]
+    prices: tuple[Decimal, ...]
 
-    return None
+
+def build_mid_price_index(
+    mid_prices: tuple[MidPricePoint, ...],
+) -> MidPriceIndex:
+    timestamps = tuple(
+        point.timestamp
+        for point in mid_prices
+    )
+
+    if any(
+        current < previous
+        for previous, current in zip(
+            timestamps,
+            timestamps[1:],
+        )
+    ):
+        raise ValueError(
+            "mid_prices must be sorted by timestamp"
+        )
+
+    prices = tuple(
+        point.mid_price
+        for point in mid_prices
+    )
+
+    return MidPriceIndex(
+        timestamps=timestamps,
+        prices=prices,
+    )
+
+
+def _future_mid_price(
+    index: MidPriceIndex,
+    target_timestamp: datetime,
+) -> Decimal | None:
+    position = bisect_left(
+        index.timestamps,
+        target_timestamp,
+    )
+
+    if position >= len(index.prices):
+        return None
+
+    return index.prices[position]
 
 
 def calculate_fill_markout(
     fill_timestamp: datetime,
     fill_price: Decimal,
     side: OrderSide,
-    mid_prices: tuple[MidPricePoint, ...],
     horizons: tuple[timedelta, ...],
+    mid_price_index: MidPriceIndex | None = None,
+    mid_prices: tuple[MidPricePoint, ...] | None = None,
 ) -> FillMarkout:
     if not horizons:
         raise ValueError("horizons cannot be empty")
 
-    if any(horizon <= timedelta(0) for horizon in horizons):
+    if any(
+        horizon <= timedelta(0)
+        for horizon in horizons
+    ):
         raise ValueError("horizons must be positive")
 
-    if any(
-        points.timestamp < points_prev.timestamp
-        for points_prev, points in zip(mid_prices, mid_prices[1:])
-    ):
-        raise ValueError("mid_prices must be sorted by timestamp")
+    if mid_price_index is None:
+        if mid_prices is None:
+            raise ValueError(
+                "Either mid_price_index or mid_prices is required"
+            )
+
+        mid_price_index = build_mid_price_index(
+            mid_prices
+        )
 
     markouts: list[Markout] = []
 
     for horizon in horizons:
         future_mid = _future_mid_price(
-            mid_prices,
+            mid_price_index,
             fill_timestamp + horizon,
         )
 
