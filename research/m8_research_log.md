@@ -163,3 +163,33 @@ sample has high P&L variance.
 
 The next research step is therefore validation and generalization, not additional strategy
 optimization.
+
+## Economic Replay Robustness — Date 1
+
+The frozen Date 1 economic replay was audited against the canonical
+LOBSTER event population. Baseline and M8 replay fills achieved 100%
+event reconciliation with zero quantity mismatches.
+
+Economic point estimates:
+
+- Baseline total P&L: +$313.87
+- M8 total P&L: +$161.78
+- M8 minus baseline: -$152.09
+
+The minute-level portfolio equity reconstruction reproduced the audited
+P&L difference exactly, with reconstruction error of $0.000000.
+
+Time-block bootstrap of the M8-minus-baseline P&L difference:
+
+| Block | Observed | 95% interval |
+|---|---:|---:|
+| 1 minute | -$152.09 | [-$1,041.59, +$717.82] |
+| 5 minutes | -$152.09 | [-$696.33, +$453.82] |
+| 10 minutes | -$152.09 | [-$656.33, +$388.68] |
+
+All intervals include zero. Therefore, the single Date 1 replay does
+not establish a statistically robust economic P&L difference between
+M8 and the baseline.
+
+The Date 1 microstructure signal remains detectable, but its economic
+value is not established from this single day.
