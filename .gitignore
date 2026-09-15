@@ -2,3 +2,4 @@ data/sample/
 __pycache__/
 *.py[cod]
 M8_*.csv
+research/m8_validation_outputs/

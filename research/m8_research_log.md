@@ -148,3 +148,18 @@ Do not introduce a new sizing mechanism yet.
 4. Second independent trading date.
 5. Repeat the exact frozen evaluation.
 6. Only after cross-date evidence is established consider a new mechanism.
+
+## M8-E10 — Empirical research checkpoint
+
+This checkpoint consolidates the main simulation findings.
+
+The key result is not a confirmed P&L advantage.
+
+The key result is that the frozen spread × contemporaneous signed-imbalance mechanism shows
+short-horizon conditional fill-quality information that decays when the state becomes stale.
+
+Economic conversion to a complete quoting strategy remains unresolved because the single-day
+sample has high P&L variance.
+
+The next research step is therefore validation and generalization, not additional strategy
+optimization.
