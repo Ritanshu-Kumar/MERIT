@@ -3,7 +3,10 @@ from datetime import datetime
 
 from merit.book.l2_book import L2OrderBook
 from merit.data.normalized import MarketEventType, OrderAddEvent
-from merit.features.snapshot import build_feature_snapshot
+from merit.features.snapshot import (
+    build_feature_snapshot,
+    build_feature_snapshot_from_levels,
+)
 from merit.portfolio.enums import OrderSide
 
 
@@ -66,3 +69,24 @@ def test_empty_snapshot() -> None:
     assert snapshot.imbalance_l10 is None
     assert snapshot.weighted_imbalance_l5 is None
     assert snapshot.weighted_imbalance_l10 is None
+
+def test_book_and_level_snapshots_match() -> None:
+    book = L2OrderBook("AAPL")
+
+    add_order(book, 1, OrderSide.BUY, "100.00", 200)
+    add_order(book, 2, OrderSide.BUY, "99.90", 100)
+    add_order(book, 3, OrderSide.BUY, "99.80", 100)
+    add_order(book, 4, OrderSide.SELL, "100.10", 100)
+    add_order(book, 5, OrderSide.SELL, "100.20", 100)
+    add_order(book, 6, OrderSide.SELL, "100.30", 100)
+
+    book_snapshot = build_feature_snapshot(book)
+
+    bids, asks = book.depth(10)
+
+    level_snapshot = build_feature_snapshot_from_levels(
+        bids,
+        asks,
+    )
+
+    assert level_snapshot == book_snapshot

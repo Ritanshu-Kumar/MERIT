@@ -8,7 +8,10 @@ from pathlib import Path
 from merit.data.lobster import OrderExecuteEvent, read_messages
 from merit.data.lobster_orderbook import read_orderbooks
 from merit.execution.queue_model import QueueModel
-from merit.features.snapshot import FeatureSnapshot
+from merit.features.snapshot import (
+    FeatureSnapshot,
+    build_feature_snapshot_from_levels,
+)
 from merit.portfolio.enums import OrderSide
 from merit.research.dataset import (
     ResearchObservation,
@@ -53,104 +56,44 @@ class LOBSTERState:
         return (self.best_bid[0] + self.best_ask[0]) / Decimal("2")
 
 
-def build_feature_snapshot_from_book(
-    bids: tuple[tuple[Decimal, int], ...],
-    asks: tuple[tuple[Decimal, int], ...],
-) -> FeatureSnapshot:
-    if not bids or not asks:
-        raise ValueError("Feature snapshot requires a two-sided book.")
-
-    bid_price, bid_size = bids[0]
-    ask_price, ask_size = asks[0]
-
-    mid_price = (bid_price + ask_price) / Decimal("2")
-    spread = ask_price - bid_price
-    relative_spread = (
-        spread / mid_price
-        if mid_price
-        else Decimal("0")
-    )
-
-    total_size = bid_size + ask_size
-
-    imbalance = (
-        Decimal(bid_size - ask_size) / Decimal(total_size)
-        if total_size
-        else Decimal("0")
-    )
-
-    microprice = (
-        (
-            ask_price * Decimal(bid_size)
-            + bid_price * Decimal(ask_size)
+def build_lobster_states(
+    message_path: str | Path,
+    orderbook_path: str | Path,
+    symbol: str,
+    trading_date: date,
+    levels: int = 10,
+) -> tuple[LOBSTERState, ...]:
+    events = tuple(
+        read_messages(
+            message_path,
+            symbol,
+            trading_date,
         )
-        / Decimal(total_size)
-        if total_size
-        else mid_price
     )
 
-    def imbalance_at_depth(levels: int) -> Decimal:
-        bid_depth = sum(
-            quantity
-            for _, quantity in bids[:levels]
+    snapshots = tuple(
+        read_orderbooks(
+            orderbook_path,
+            levels=levels,
         )
-        ask_depth = sum(
-            quantity
-            for _, quantity in asks[:levels]
-        )
-
-        total = bid_depth + ask_depth
-
-        if total == 0:
-            return Decimal("0")
-
-        return Decimal(
-            bid_depth - ask_depth
-        ) / Decimal(total)
-
-    def weighted_imbalance(levels: int) -> Decimal:
-        bid_weighted = Decimal("0")
-        ask_weighted = Decimal("0")
-
-        for level, (_, quantity) in enumerate(
-            bids[:levels],
-            start=1,
-        ):
-            bid_weighted += (
-                Decimal(quantity) / Decimal(level)
-            )
-
-        for level, (_, quantity) in enumerate(
-            asks[:levels],
-            start=1,
-        ):
-            ask_weighted += (
-                Decimal(quantity) / Decimal(level)
-            )
-
-        total = bid_weighted + ask_weighted
-
-        if total == 0:
-            return Decimal("0")
-
-        return (
-            bid_weighted - ask_weighted
-        ) / total
-
-    return FeatureSnapshot(
-        mid_price=mid_price,
-        spread=spread,
-        relative_spread=relative_spread,
-        bid_size=bid_size,
-        ask_size=ask_size,
-        imbalance=imbalance,
-        microprice=microprice,
-        imbalance_l5=imbalance_at_depth(5),
-        imbalance_l10=imbalance_at_depth(10),
-        weighted_imbalance_l5=weighted_imbalance(5),
-        weighted_imbalance_l10=weighted_imbalance(10),
     )
 
+    if not events or not snapshots:
+        return ()
+
+    aligned_count = min(
+        len(events),
+        len(snapshots),
+    )
+
+    if aligned_count < 2:
+        return ()
+
+    return _build_states(
+        events[:aligned_count],
+        snapshots[:aligned_count],
+        symbol,
+    )
 
 def _build_states(
     events: tuple,
@@ -219,29 +162,18 @@ def build_lobster_research_dataset(
         )
     )
 
-    snapshots = tuple(
-        read_orderbooks(
-            orderbook_path,
-            levels=levels,
-        )
+    states = build_lobster_states(
+        message_path=message_path,
+        orderbook_path=orderbook_path,
+        symbol=symbol,
+        trading_date=trading_date,
+        levels=levels,
     )
 
-    if not events or not snapshots:
+    if not events or not states:
         return ()
 
-    aligned_count = min(
-        len(events),
-        len(snapshots),
-    )
-
-    if aligned_count < 2:
-        return ()
-
-    states = _build_states(
-        events[:aligned_count],
-        snapshots[:aligned_count],
-        symbol,
-    )
+    aligned_count = len(states)
 
     mid_prices = tuple(
         MidPricePoint(
@@ -283,7 +215,7 @@ def build_lobster_research_dataset(
         if side is None:
             continue
 
-        feature_snapshot = build_feature_snapshot_from_book(
+        feature_snapshot = build_feature_snapshot_from_levels(
             previous_state.bids,
             previous_state.asks,
         )
