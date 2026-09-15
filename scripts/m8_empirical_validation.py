@@ -207,10 +207,7 @@ def permutation_placebo(
 ) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
 
-    symbols = (
-        df["symbol"]
-        .to_numpy()
-    )
+    symbols = df["symbol"].to_numpy()
 
     original = (
         df["signed_imbalance"]
@@ -228,13 +225,14 @@ def permutation_placebo(
                 symbols == symbol
             )
 
-            rng.shuffle(
-                shuffled[indices]
-            )
+            values = shuffled[indices].copy()
+
+            rng.shuffle(values)
+
+            shuffled[indices] = values
 
         score = (
-            df["relative_spread_pct"]
-            .to_numpy()
+            df["relative_spread_pct"].to_numpy()
             * shuffled
         )
 
@@ -258,9 +256,7 @@ def permutation_placebo(
     return pd.DataFrame(
         {
             "mean_bps": [
-                float(
-                    effects_array.mean()
-                )
+                float(effects_array.mean())
             ],
             "p025_bps": [
                 float(
@@ -289,7 +285,9 @@ def permutation_placebo(
             "repetitions": [
                 repetitions
             ],
-            "seed": [seed],
+            "seed": [
+                seed
+            ],
         }
     )
 
