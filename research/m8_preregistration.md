@@ -173,3 +173,81 @@ The conditional M8 fill-quality effect has been frozen.
 The economic P&L question remains unresolved on the current single-day sample.
 
 The next research phase is audit and cross-date validation, not additional threshold or sizing optimization.
+
+## Date 2 Replication Protocol
+
+The second trading date will be evaluated using the same frozen M8
+mechanism, threshold, symbols, order quantity, causal execution
+convention, and economic evaluation framework used for Date 1.
+
+No threshold, mechanism, quantity, or execution assumption may be
+changed after inspecting Date 2 results.
+
+### Pre-specified Date 2 analyses
+
+The following analyses will be run without modification:
+
+1. Pooled 1-second conditional effect.
+2. Temporal placebo at 0, 1, 5, 20, and 100 event lags.
+3. Within-symbol permutation placebo.
+4. Symbol decomposition.
+5. Per-symbol bootstrap intervals.
+6. Economic replay against the baseline market maker.
+7. Economic P&L block bootstrap using 1-, 5-, and 10-minute blocks.
+
+No additional analysis may be introduced solely because of the observed
+Date 2 results.
+
+### Replication criteria
+
+Date 2 will be classified as a signal replication only if:
+
+1. The pooled 1-second conditional effect is positive.
+2. The contemporary effect is materially larger than the
+   100-event placebo.
+3. The temporal relationship shows decay away from the contemporaneous
+   state rather than an arbitrary lagged pattern.
+4. The within-symbol permutation placebo remains centered near zero.
+5. No Date 1 symbol with a robust positive effect develops a robust
+   negative effect on Date 2.
+
+A symbol is considered to have a robust sign when its 95% bootstrap
+interval excludes zero.
+
+The economic result is evaluated separately from signal replication.
+
+### Failure criteria
+
+Date 2 will be classified as a signal failure if:
+
+- the pooled 1-second effect is non-positive,
+- the temporal decay pattern is absent, or
+- the permutation placebo indicates a comparable non-zero effect.
+
+### Inconclusive criteria
+
+Date 2 will be classified as inconclusive when the evidence is mixed,
+including cases where the signal characteristics replicate but the
+economic P&L comparison remains statistically unresolved.
+
+A signal replication does not imply economic profitability.
+
+### Cross-date analysis
+
+After Date 2 is evaluated, Date 1 and Date 2 will be analyzed jointly.
+
+The cross-date analysis will report:
+
+- date-level conditional effects,
+- symbol-level effects,
+- pooled effect,
+- between-date heterogeneity,
+- random-effects meta-analysis where appropriate,
+- economic P&L comparison for each date.
+
+GOOG will be reported explicitly rather than absorbed into a single
+heterogeneity statistic because its Date 1 effect is robustly negative.
+
+The two-date analysis is still considered limited evidence and is not
+sufficient by itself to establish generalization across broader market
+regimes, venues, or live trading.
