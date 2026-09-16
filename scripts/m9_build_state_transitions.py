@@ -1026,7 +1026,7 @@ def process_message(
             symbol_flow.append(
                 FlowEvent(
                     timestamp_ns=timestamp_ns,
-                    kind="EXECUTION",
+                    kind="CANCEL",
                     side=flow_side(
                         existing.side
                     ),
