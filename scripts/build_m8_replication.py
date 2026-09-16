@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import argparse
 import csv
 import time
 from datetime import date
@@ -19,40 +22,75 @@ SYMBOLS = [
     "MSFT",
 ]
 
-TRADING_DATE = date(2012, 6, 21)
-
+LEVELS = 10
 QUEUE_AHEAD_FRACTION = 0.0
 ORDER_QUANTITY = 100
-LEVELS = 10
-
-OUTPUT_FILE = BASE / "M8_replication_research_dataset.csv"
 
 
-def get_message_file(symbol: str) -> Path:
+def parse_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "Date must use YYYY-MM-DD."
+        ) from exc
+
+
+def get_message_file(
+    symbol: str,
+    trading_date: date,
+) -> Path:
     return BASE / (
-        f"{symbol}_2012-06-21_34200000_57600000"
+        f"{symbol}_{trading_date.isoformat()}"
+        "_34200000_57600000"
         "_message_10.csv"
     )
 
 
-def get_orderbook_file(symbol: str) -> Path:
+def get_orderbook_file(
+    symbol: str,
+    trading_date: date,
+) -> Path:
     return BASE / (
-        f"{symbol}_2012-06-21_34200000_57600000"
+        f"{symbol}_{trading_date.isoformat()}"
+        "_34200000_57600000"
         "_orderbook_10.csv"
     )
 
 
-def get_symbol_output(symbol: str) -> Path:
-    return BASE / f"M8_replication_{symbol}.csv"
+def get_symbol_output(
+    symbol: str,
+    trading_date: date,
+) -> Path:
+    return BASE / (
+        f"M8_replication_"
+        f"{symbol}_{trading_date.isoformat()}.csv"
+    )
 
 
-def write_dataset(path: Path, observations) -> None:
+def get_combined_output(
+    trading_date: date,
+) -> Path:
+    return BASE / (
+        f"M8_replication_research_dataset_"
+        f"{trading_date.isoformat()}.csv"
+    )
+
+
+def write_dataset(
+    path: Path,
+    observations,
+) -> None:
     if not observations:
-        print(f"  No observations for {path.stem}")
+        print(
+            f"  No observations for {path.stem}"
+        )
         return
 
     fieldnames = list(
-        observations[0].__dataclass_fields__.keys()
+        observations[0]
+        .__dataclass_fields__
+        .keys()
     )
 
     with path.open(
@@ -102,7 +140,9 @@ def combine_datasets(
             "No symbol datasets were available."
         )
 
-    fieldnames = list(combined_rows[0].keys())
+    fieldnames = list(
+        combined_rows[0].keys()
+    )
 
     with output_file.open(
         "w",
@@ -119,37 +159,83 @@ def combine_datasets(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--date",
+        required=True,
+        type=parse_date,
+        help="Trading date in YYYY-MM-DD format.",
+    )
+
+    args = parser.parse_args()
+
+    trading_date = args.date
+
+    print()
+    print("M8 RESEARCH DATASET BUILDER")
+    print("=" * 80)
+    print(
+        f"Trading date: {trading_date}"
+    )
+
     completed_files = []
 
     for symbol in SYMBOLS:
-        message_file = get_message_file(symbol)
-        orderbook_file = get_orderbook_file(symbol)
-        symbol_output = get_symbol_output(symbol)
+        message_file = get_message_file(
+            symbol,
+            trading_date,
+        )
+
+        orderbook_file = get_orderbook_file(
+            symbol,
+            trading_date,
+        )
+
+        symbol_output = get_symbol_output(
+            symbol,
+            trading_date,
+        )
 
         if not message_file.exists():
-            raise FileNotFoundError(message_file)
+            raise FileNotFoundError(
+                f"Missing message file: "
+                f"{message_file}"
+            )
 
         if not orderbook_file.exists():
-            raise FileNotFoundError(orderbook_file)
+            raise FileNotFoundError(
+                f"Missing orderbook file: "
+                f"{orderbook_file}"
+            )
 
-        print(f"\nProcessing {symbol}...")
+        print(
+            f"\nProcessing {symbol}..."
+        )
 
         start = time.perf_counter()
 
-        observations = build_lobster_research_dataset(
-            message_path=message_file,
-            orderbook_path=orderbook_file,
-            symbol=symbol,
-            trading_date=TRADING_DATE,
-            queue_model=QueueModel(
-                ahead_fraction=QUEUE_AHEAD_FRACTION,
-            ),
-            order_quantity=ORDER_QUANTITY,
-            levels=LEVELS,
-            max_observations=None,
+        observations = (
+            build_lobster_research_dataset(
+                message_path=message_file,
+                orderbook_path=orderbook_file,
+                symbol=symbol,
+                trading_date=trading_date,
+                queue_model=QueueModel(
+                    ahead_fraction=(
+                        QUEUE_AHEAD_FRACTION
+                    ),
+                ),
+                order_quantity=ORDER_QUANTITY,
+                levels=LEVELS,
+                max_observations=None,
+            )
         )
 
-        elapsed = time.perf_counter() - start
+        elapsed = (
+            time.perf_counter()
+            - start
+        )
 
         write_dataset(
             symbol_output,
@@ -157,24 +243,36 @@ def main() -> None:
         )
 
         print(
-            f"  Observations: {len(observations):,}"
+            f"  Observations: "
+            f"{len(observations):,}"
         )
+
         print(
             f"  Time: {elapsed:.2f} seconds"
         )
+
         print(
             f"  Saved: {symbol_output}"
         )
 
-        completed_files.append(symbol_output)
+        completed_files.append(
+            symbol_output
+        )
+
+    combined_output = (
+        get_combined_output(
+            trading_date
+        )
+    )
 
     combine_datasets(
         completed_files,
-        OUTPUT_FILE,
+        combined_output,
     )
 
     print(
-        f"\nCombined output: {OUTPUT_FILE}"
+        f"\nCombined output: "
+        f"{combined_output}"
     )
 
 

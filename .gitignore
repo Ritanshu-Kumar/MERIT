@@ -3,3 +3,7 @@ __pycache__/
 *.py[cod]
 M8_*.csv
 research/m8_validation_outputs/
+data/itch/
+
+research/itch_economic_fills.csv
+research/itch_economic_minute_equity.csv
