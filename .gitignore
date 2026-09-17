@@ -9,3 +9,11 @@ research/itch_economic_fills.csv
 research/itch_economic_minute_equity.csvresearch/m9_fill_hazard_2019-07-30.csv
 research/m9_fill_hazard_markouts_2019-07-30.csv
 research/m9_state_transitions_2019-07-30.csv
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/research/itch_economic_minute_equity.csv
+research/m9_fill_hazard_2019-07-30.csv
+research/itch_economic_minute_equity.csv
