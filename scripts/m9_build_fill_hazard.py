@@ -23,6 +23,13 @@ QUOTE_QTY = 100
 TIMEOUT_NS = 1_000_000_000
 TICK_SIZE_UNITS = 100
 
+MARKOUT_HORIZONS_NS = {
+    "10ms": 10_000_000,
+    "100ms": 100_000_000,
+    "500ms": 500_000_000,
+    "1s": 1_000_000_000,
+}
+
 OUTPUT_COLUMNS = [
     "timestamp_ns",
     "symbol",
@@ -46,6 +53,11 @@ OUTPUT_COLUMNS = [
     "level_resets",
     "outcome",
     "fill_before_adverse",
+    "fill_timestamp_ns",
+    "future_mid_10ms",
+    "future_mid_100ms",
+    "future_mid_500ms",
+    "future_mid_1s",
 ]
 
 
@@ -90,6 +102,21 @@ class Candidate:
     resolution_mid: Optional[float] = None
 
     required_execution_volume: int = 0
+    fill_timestamp_ns: Optional[int] = None
+    future_mids: Optional[dict[str, Optional[float]]] = None
+    markout_resolved: Optional[dict[str, bool]] = None
+
+    def __post_init__(self) -> None:
+        if self.future_mids is None:
+            self.future_mids = {
+                horizon: None
+                for horizon in MARKOUT_HORIZONS_NS
+            }
+        if self.markout_resolved is None:
+            self.markout_resolved = {
+                horizon: False
+                for horizon in MARKOUT_HORIZONS_NS
+            }
 
 
 class HazardEngine:
@@ -131,6 +158,7 @@ class HazardEngine:
         ] = []
 
         self.completed: deque[Candidate] = deque()
+        self.pending_fill_marks: dict[int, deque[Candidate]] = defaultdict(deque)
 
     def level_key(
         self,
@@ -183,8 +211,8 @@ class HazardEngine:
         candidate.resolution_mid = resolution_mid
 
         self._remove_active(candidate)
-
-        self.completed.append(candidate)
+        candidate.fill_timestamp_ns = timestamp_ns
+        self.pending_fill_marks[candidate.stock_locate].append(candidate)
 
     def _partial_fill_at_current_epoch(
         self,
@@ -732,6 +760,45 @@ class HazardEngine:
             self._remove_active(candidate)
             self.completed.append(candidate)
 
+    def resolve_post_fill_markouts(
+        self,
+        stock_locate: int,
+        timestamp_ns: int,
+        current_mid: Optional[float],
+    ) -> None:
+        if current_mid is None:
+            return
+
+        pending = self.pending_fill_marks[stock_locate]
+        remaining: deque[Candidate] = deque()
+
+        while pending:
+            candidate = pending.popleft()
+
+            if candidate.fill_timestamp_ns is None:
+                remaining.append(candidate)
+                continue
+
+            age = (
+                timestamp_ns
+                - candidate.fill_timestamp_ns
+            )
+
+            for horizon_name, horizon_ns in MARKOUT_HORIZONS_NS.items():
+                if (
+                    not candidate.markout_resolved[horizon_name]
+                    and age >= horizon_ns
+                ):
+                    candidate.future_mids[horizon_name] = current_mid
+                    candidate.markout_resolved[horizon_name] = True
+
+            if all(candidate.markout_resolved.values()):
+                self.completed.append(candidate)
+            else:
+                remaining.append(candidate)
+
+        self.pending_fill_marks[stock_locate] = remaining
+
     def pop_completed(
         self,
     ) -> list[Candidate]:
@@ -843,6 +910,11 @@ def candidate_to_row(
         "fill_before_adverse": (
             candidate.status == "FILL"
         ),
+        "fill_timestamp_ns": candidate.fill_timestamp_ns,
+        "future_mid_10ms": candidate.future_mids["10ms"],
+        "future_mid_100ms": candidate.future_mids["100ms"],
+        "future_mid_500ms": candidate.future_mids["500ms"],
+        "future_mid_1s": candidate.future_mids["1s"],
     }
 
 
@@ -1214,6 +1286,16 @@ def run(
 
             post_state = book.snapshot()
 
+            engine.resolve_post_fill_markouts(
+                stock_locate=stock_locate,
+                timestamp_ns=timestamp_ns,
+                current_mid=(
+                    post_state.mid
+                    if post_state is not None
+                    else None
+                ),
+            )
+
             # -------------------------------------------------------
             # Current execution belongs to EXISTING candidates.
             # Newly created candidates below do not see it.
@@ -1454,7 +1536,7 @@ def main() -> None:
         type=Path,
         default=Path(
             "research/"
-            "m9_fill_hazard_2019-07-30.csv"
+            "m9_fill_hazard_markouts_2019-07-30.csv"
         ),
     )
 
