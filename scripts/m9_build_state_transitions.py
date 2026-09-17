@@ -560,13 +560,15 @@ def trailing_features(
         result[f"buy_flow_{label}"] = sum(
             event.shares
             for event in events
-            if event.side == "BUY"
+            if event.kind == "EXECUTION"
+            and event.side == "BUY"
         )
 
         result[f"sell_flow_{label}"] = sum(
             event.shares
             for event in events
-            if event.side == "SELL"
+            if event.kind == "EXECUTION"
+            and event.side == "SELL"
         )
 
     return result
