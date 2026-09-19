@@ -5,8 +5,7 @@ from decimal import Decimal
 
 from merit.book.l2_book import L2OrderBook
 from merit.data.normalized import NormalizedMarketEvent
-from merit.features.snapshot import FeatureSnapshot
-from merit.features.snapshot import build_feature_snapshot
+from merit.features.snapshot import FeatureSnapshot, build_feature_snapshot
 
 
 @dataclass(frozen=True)

@@ -13,7 +13,6 @@ from merit.features.snapshot import build_feature_snapshot
 from merit.portfolio.enums import OrderSide
 from merit.research.opportunities import QuoteOpportunity
 
-
 BookEvent = (
     OrderAddEvent
     | OrderCancelEvent

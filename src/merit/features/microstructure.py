@@ -42,7 +42,7 @@ def calculate_features(book: L2OrderBook) -> MicrostructureFeatures:
             microprice=None,
         )
 
-    mid_price = (best_bid + best_ask) / Decimal("2")
+    mid_price = (best_bid + best_ask) / Decimal(2)
     spread = best_ask - best_bid
     relative_spread = spread / mid_price
 

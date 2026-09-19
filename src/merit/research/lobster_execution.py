@@ -47,7 +47,7 @@ class LobsterExecutionEngine:
         risk_manager: RiskManager,
         queue_model: QueueModel,
         quantity: int,
-        fee_bps: Decimal = Decimal("0"),
+        fee_bps: Decimal = Decimal(0),
     ) -> None:
         if not symbol:
             raise ValueError("symbol cannot be empty")
@@ -173,7 +173,7 @@ class LobsterExecutionEngine:
             Decimal(quantity)
             * active.price
             * self.fee_bps
-            / Decimal("10000")
+            / Decimal(10000)
         )
 
         fill_id = f"{self.symbol}-{self._next_fill_id}"

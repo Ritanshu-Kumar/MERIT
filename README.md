@@ -308,13 +308,25 @@ MERIT/
 
 ## Current Status
 
-**M0 — Research Infrastructure**
+**Research status: M8 empirical checkpoint completed; economic generalization remains open.**
 
-The project is currently establishing the software architecture, configuration system, testing framework, and reproducibility foundation.
+The repository has progressed beyond the original infrastructure-only phase. The current codebase includes:
 
-- No market-making performance claims have been made.
-- No real-money trading is part of the core project.
+- Local L2 order-book reconstruction
+- Event-driven market replay
+- Microstructure and depth features
+- Baseline market-making strategy
+- Execution latency, participation, and queue models
+- Portfolio accounting and risk limits
+- M8 research configuration and frozen mechanism
+- M8 empirical checkpoint and reproducibility artifacts
+- Additional M9, M10, and M11 research artifacts
 
+The M8 checkpoint reports evidence that the frozen `relative_spread_pct × signed_imbalance` mechanism contains short-horizon conditional fill-quality information. The current research log does **not** establish a statistically robust economic P&L advantage over the baseline from the available single-day replay.
+
+The documented next step is validation on additional independent data and continued implementation-consistency auditing rather than further tuning of the frozen mechanism.
+
+See `docs/m8_research_protocol.md` and `research/m8/` for the frozen protocol, research log, and checkpoint details.
 ## Long-Term Goal
 
 The objective is not to build the largest trading platform or to imitate an existing proprietary market maker.

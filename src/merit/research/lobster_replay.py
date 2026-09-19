@@ -1,9 +1,8 @@
 from collections.abc import Iterable, Iterator
-from datetime import datetime
 from decimal import Decimal
 
-from merit.data.normalized import NormalizedMarketEvent
 from merit.data.lobster_orderbook import read_orderbooks
+from merit.data.normalized import NormalizedMarketEvent
 from merit.features.snapshot import FeatureSnapshot
 from merit.research.market_replay import MarketState
 
@@ -33,7 +32,7 @@ def build_feature_snapshot_from_book(
             weighted_imbalance_l10=_weighted_imbalance(bids, asks, 10),
         )
 
-    mid_price = (best_bid[0] + best_ask[0]) / Decimal("2")
+    mid_price = (best_bid[0] + best_ask[0]) / Decimal(2)
     spread = best_ask[0] - best_bid[0]
 
     total_size = bid_size + ask_size
@@ -83,7 +82,7 @@ def replay_lobster_snapshots(
             timestamp=event.timestamp,
             symbol=event.symbol,
             mid_price=(
-                (bids[0][0] + asks[0][0]) / Decimal("2")
+                (bids[0][0] + asks[0][0]) / Decimal(2)
                 if bids and asks
                 else None
             ),

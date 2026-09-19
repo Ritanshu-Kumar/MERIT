@@ -84,7 +84,7 @@ def build_feature_snapshot_from_levels(
 
     mid_price = (
         best_bid[0] + best_ask[0]
-    ) / Decimal("2")
+    ) / Decimal(2)
 
     spread = best_ask[0] - best_bid[0]
 

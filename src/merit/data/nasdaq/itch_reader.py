@@ -1,5 +1,5 @@
-from collections.abc import Iterator
 import gzip
+from collections.abc import Iterator
 from pathlib import Path
 
 

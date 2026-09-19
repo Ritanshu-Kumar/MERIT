@@ -1,6 +1,6 @@
 import csv
 from collections.abc import Iterator
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -29,13 +29,13 @@ def _parse_timestamp(value: str, trading_date: date) -> datetime:
     fractional_seconds = seconds - Decimal(whole_seconds)
 
     microseconds = int(
-        fractional_seconds * Decimal("1000000")
+        fractional_seconds * Decimal(1000000)
     )
 
     return datetime.combine(
         trading_date,
         datetime.min.time(),
-        tzinfo=timezone.utc,
+        tzinfo=UTC,
     ) + timedelta(
         seconds=whole_seconds,
         microseconds=microseconds,
@@ -44,7 +44,7 @@ def _parse_timestamp(value: str, trading_date: date) -> datetime:
 
 def _parse_price(value: str) -> Decimal:
     try:
-        return Decimal(value) / Decimal("10000")
+        return Decimal(value) / Decimal(10000)
     except Exception as exc:
         raise LOBSTERParseError(
             f"Invalid price: {value}"

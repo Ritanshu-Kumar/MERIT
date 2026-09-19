@@ -1,19 +1,37 @@
+# Local / sensitive datasets
 data/sample/
-__pycache__/
-*.py[cod]
-M8_*.csv
-research/m8_validation_outputs/
 data/itch/
-
 research/itch_economic_fills.csv
-research/itch_economic_minute_equity.csvresearch/m9_fill_hazard_2019-07-30.csv
+research/itch_economic_minute_equity.csv
+research/m9_fill_hazard_2019-07-30.csv
 research/m9_fill_hazard_markouts_2019-07-30.csv
 research/m9_state_transitions_2019-07-30.csv
+M8_*.csv
+research/m8_validation_outputs/
 
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
-.venv/research/itch_economic_minute_equity.csv
-research/m9_fill_hazard_2019-07-30.csv
-research/itch_economic_minute_equity.csv
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build / distribution
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

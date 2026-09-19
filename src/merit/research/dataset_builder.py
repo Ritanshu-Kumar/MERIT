@@ -5,7 +5,6 @@ from merit.research.dataset import ResearchObservation
 from merit.research.historical_fills import HistoricalFill
 from merit.research.targets import MidPricePoint, calculate_fill_markout
 
-
 HORIZONS = (
     timedelta(milliseconds=100),
     timedelta(seconds=1),

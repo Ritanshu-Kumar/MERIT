@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
 import heapq
+from dataclasses import dataclass, field
 from itertools import count
 
 from .events import MarketEvent

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
+from itertools import pairwise
 
 from merit.portfolio.enums import OrderSide
 
@@ -51,10 +52,7 @@ def build_mid_price_index(
 
     if any(
         current < previous
-        for previous, current in zip(
-            timestamps,
-            timestamps[1:],
-        )
+        for previous, current in pairwise(timestamps)
     ):
         raise ValueError(
             "mid_prices must be sorted by timestamp"

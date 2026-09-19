@@ -1,6 +1,5 @@
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from decimal import Decimal
 
 from merit.data.normalized import NormalizedMarketEvent, TradeEvent
 from merit.execution.simulator import ExecutionSimulator

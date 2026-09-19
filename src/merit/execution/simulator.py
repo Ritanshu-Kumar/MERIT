@@ -3,14 +3,13 @@ from datetime import datetime
 from decimal import Decimal
 
 from merit.data.normalized import TradeEvent
-from merit.execution import queue_model
-from merit.execution import queue_model
-from merit.portfolio.enums import OrderSide, OrderStatus, OrderType
-from merit.portfolio.models import Fill, Order
 from merit.execution.latency import LatencyModel
 from merit.execution.participation import ParticipationModel
 from merit.execution.queue import QueuePosition
 from merit.execution.queue_model import QueueModel
+from merit.portfolio.enums import OrderSide, OrderStatus, OrderType
+from merit.portfolio.models import Fill, Order
+
 
 @dataclass(frozen=True)
 class ExecutionResult:
@@ -116,7 +115,7 @@ class ExecutionSimulator:
                 side=order.side,
                 quantity=quantity,
                 price=order.limit_price,
-                fee=Decimal("0"),
+                fee=Decimal(0),
             )
 
             self._next_fill_id += 1

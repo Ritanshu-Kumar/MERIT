@@ -1,6 +1,8 @@
 from collections.abc import Iterator
 from datetime import date
 
+from merit.data.nasdaq.itch import ITCHDecoder
+from merit.data.nasdaq.itch_reader import read_binaryfile
 from merit.data.normalized import (
     OrderAddEvent,
     OrderCancelEvent,
@@ -9,9 +11,6 @@ from merit.data.normalized import (
     OrderReplaceEvent,
     TradeEvent,
 )
-from merit.data.nasdaq.itch import ITCHDecoder
-from merit.data.nasdaq.itch_reader import read_binaryfile
-
 
 DecodedEvent = (
     OrderAddEvent

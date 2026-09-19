@@ -3,8 +3,7 @@ from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 
-
-PRICE_SCALE = Decimal("10000")
+PRICE_SCALE = Decimal(10000)
 
 
 def read_orderbooks(

@@ -9,7 +9,6 @@ from merit.data.normalized import (
     OrderExecuteEvent,
     OrderReplaceEvent,
 )
-
 from merit.portfolio.enums import OrderSide
 
 

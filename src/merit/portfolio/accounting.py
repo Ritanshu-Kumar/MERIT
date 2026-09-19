@@ -1,9 +1,8 @@
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_EVEN
+from decimal import ROUND_HALF_EVEN, Decimal
 
 from .enums import OrderSide
 from .models import Fill, Position
-
 
 PRICE_QUANTUM = Decimal("0.00000001")
 MONEY_QUANTUM = Decimal("0.01")

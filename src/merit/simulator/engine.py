@@ -1,13 +1,10 @@
 from collections.abc import Callable
-from typing import TypeAlias
 
 from .clock import SimulationClock
 from .events import MarketEvent
 from .queue import EventQueue
 
-
-EventHandler: TypeAlias = Callable[[MarketEvent], None]
-
+type EventHandler = Callable[[MarketEvent], None]
 
 class SimulationEngine:
     def __init__(

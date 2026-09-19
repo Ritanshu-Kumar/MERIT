@@ -9,7 +9,6 @@ from merit.data.lobster import OrderExecuteEvent, read_messages
 from merit.data.lobster_orderbook import read_orderbooks
 from merit.execution.queue_model import QueueModel
 from merit.features.snapshot import (
-    FeatureSnapshot,
     build_feature_snapshot_from_levels,
 )
 from merit.portfolio.enums import OrderSide
@@ -53,7 +52,7 @@ class LOBSTERState:
         if self.best_bid is None or self.best_ask is None:
             return None
 
-        return (self.best_bid[0] + self.best_ask[0]) / Decimal("2")
+        return (self.best_bid[0] + self.best_ask[0]) / Decimal(2)
 
 
 def build_lobster_states(

@@ -1,7 +1,7 @@
+import struct
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-import struct
 
 from merit.data.normalized import (
     MarketEventType,
@@ -16,8 +16,7 @@ from merit.data.normalized import (
     TradingActionEvent,
 )
 
-
-PRICE_SCALE = Decimal("10000")
+PRICE_SCALE = Decimal(10000)
 
 
 class ITCHParseError(ValueError):

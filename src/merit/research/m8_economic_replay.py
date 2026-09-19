@@ -12,10 +12,8 @@ from merit.execution.queue_model import QueueModel
 from merit.portfolio.enums import OrderSide
 from merit.portfolio.models import Fill
 from merit.portfolio.portfolio import Portfolio
-from merit.risk.limits import RiskLimits, RiskManager
-from merit.strategy.baseline import BaselineMarketMaker
-from merit.strategy.m8 import M8MarketMaker
 from merit.research.lobster_m8 import build_feature_snapshot_from_book
+from merit.risk.limits import RiskManager
 
 
 @dataclass
@@ -190,7 +188,7 @@ def run_symbol(
                 side=side,
                 quantity=quantity,
                 price=resting.price,
-                fee=Decimal("0"),
+                fee=Decimal(0),
             )
 
             portfolio.process_fill(fill)
