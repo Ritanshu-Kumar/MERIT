@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import argparse
@@ -25,62 +26,63 @@ def main() -> None:
 
     df = pd.read_csv(args.input)
 
-    # ITCH side = resting order side.
-    # A passive fill is on the opposite side.
-    df["quote_side"] = df["side"].map(
-        {
-            "S": "BUY",
-            "B": "SELL",
-        }
-    )
+    # ITCH side is the resting order's side.
+    # The passive quote is on the opposite side.
+    df["quote_side"] = df["side"].map({
+        "S": "BUY",
+        "B": "SELL",
+    })
 
     if df["quote_side"].isna().any():
-        raise ValueError(
-            "Unexpected ITCH side value."
-        )
+        raise ValueError("Unexpected ITCH side value.")
 
+    # Calculate M8 score from the passive quote's perspective.
     signed_imbalance = df["imbalance"].where(
         df["quote_side"] == "BUY",
         -df["imbalance"],
     )
 
     df["score"] = (
-        df["relative_spread"]
-        * 100.0
-        * signed_imbalance
+        df["relative_spread"] * 100.0 * signed_imbalance
     )
 
     df["selected"] = (
         df["score"] >= THRESHOLD
     ).astype(int)
 
-    df.to_csv(
-        args.output,
-        index=False,
+    # Recalculate markout relative to execution price.
+    # BUY: future midpoint - execution price.
+    # SELL: execution price - future midpoint.
+    execution_price = pd.to_numeric(
+        df["execution_price"], errors="coerce"
     )
 
-    print("=== CORRECTED ITCH M8 LABELS ===")
-    print(f"rows: {len(df):,}")
-    print(
-        f"selected: {int(df['selected'].sum()):,}"
-    )
-    print(
-        f"selection rate: {df['selected'].mean():.6f}"
-    )
-    print()
-    print(
-        df.groupby(
-            ["symbol", "quote_side"]
-        )["selected"]
-        .agg(
-            n="size",
-            selected="sum",
-            rate="mean",
+    for horizon in ("100ms", "1s", "5s"):
+        future_mid = pd.to_numeric(
+            df[f"future_mid_{horizon}"], errors="coerce"
         )
-        .to_string()
-    )
-    print()
-    print(f"output: {args.output}")
+
+        signed_move = (
+            future_mid - execution_price
+        ).where(
+            df["quote_side"] == "BUY",
+            execution_price - future_mid,
+        )
+
+        df[f"post_fill_move_{horizon}"] = signed_move
+
+        df[f"return_bps_{horizon}"] = (
+            signed_move / execution_price * 10000.0
+        ).where(execution_price > 0)
+
+    df.to_csv(args.output, index=False)
+
+    print("=== CORRECTED ITCH M8 LABELS ===")
+    print(f"Rows: {len(df):,}")
+    print(f"Selected: {int(df['selected'].sum()):,}")
+    print(f"Selection rate: {df['selected'].mean():.6f}")
+    print("Returns recalculated relative to execution price.")
+    print(f"Output: {args.output}")
 
 
 if __name__ == "__main__":
