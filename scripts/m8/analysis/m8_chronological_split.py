@@ -29,10 +29,8 @@ def main() -> None:
     test = df.iloc[validation_end:].copy()
 
     train_boundary = train["timestamp"].iloc[-1]
-    validation_start = validation["timestamp"].iloc[0]
 
     validation_boundary = validation["timestamp"].iloc[-1]
-    test_start = test["timestamp"].iloc[0]
 
     purge = pd.Timedelta(seconds=PURGE_SECONDS)
     embargo = pd.Timedelta(seconds=EMBARGO_SECONDS)

@@ -1082,25 +1082,17 @@ def run(
             # before mutating the book.
             resting_order: Optional[m9.Order] = None
             execution_shares = 0
-            actual_execution_price: Optional[int] = None
 
             if message_type in {"E", "C"}:
                 (
                     order_ref,
                     execution_shares,
-                    printable_price,
+                    _,
                 ) = m9.parse_execution(msg)
 
                 resting_order = book.orders.get(
                     order_ref
                 )
-
-                if resting_order is not None:
-                    actual_execution_price = (
-                        printable_price
-                        if printable_price is not None
-                        else resting_order.price
-                    )
 
             # Prices whose displayed depth may change.
             affected_levels: set[

@@ -74,7 +74,7 @@ def main() -> None:
         )
 
         print(f"\n=== {horizon} ===")
-        print(f"Pearson:")
+        print("Pearson:")
         print(f"  r = {pearson_r:.6f}")
         print(f"  p = {pearson_p:.6f}")
         print("Spearman:")

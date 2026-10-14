@@ -1,11 +1,6 @@
 from datetime import date
 from decimal import Decimal
 
-from merit.data.lobster_orderbook import read_orderbooks
-from merit.data.normalized import (
-    MarketEventType,
-    OrderExecuteEvent,
-)
 from merit.execution.queue_model import QueueModel
 from merit.research.lobster_fills import replay_lobster_fills
 
