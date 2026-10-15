@@ -1,0 +1,31 @@
+MERIT: M8 vs ML activity-matched diagnostic
+==========================================================
+Test candidates: 85,762
+M8-selected candidates: 14,405
+
+                   policy  selected_candidates  test_selection_rate_pct  full_fill_rate_pct  adverse_rate_pct  timeout_rate_pct
+      All test candidates                85762                 100.0000              6.9017           46.7783           46.3200
+                Frozen M8                14405                  16.7965              5.1649           41.6800           53.1552
+ML, test-activity-matched                14405                  16.7965             14.7379           22.3603           62.9018
+
+Per-symbol breakdown
+symbol     policy  selected  fill_rate_pct  adverse_rate_pct  timeout_rate_pct
+  AAPL  Frozen M8      7803         6.1258           61.5020           32.3722
+  AAPL ML matched      2676        15.4709           37.6308           46.8984
+  AMZN  Frozen M8      1054         0.1898           32.4478           67.3624
+  AMZN ML matched         0         0.0000            0.0000            0.0000
+  GOOG  Frozen M8      1134         0.0882           43.8272           56.0847
+  GOOG ML matched         7         0.0000          100.0000            0.0000
+  INTC  Frozen M8      4009         5.4877            4.5148           89.9975
+  INTC ML matched     10018        15.6418           19.7245           64.6337
+  MSFT  Frozen M8       405        10.6173           45.6790           43.7037
+  MSFT ML matched      1704         8.3333           13.5563           78.1103
+
+Limitations:
+- One trading date; results are exploratory.
+- ML selection count is matched retrospectively on test scores.
+- This is not a prospective threshold evaluation.
+- Outcome rates are not net P&L; partial fills are not fully valued.
+- Candidates may overlap in time and are not independent observations.
+
+Selected candidates saved to: research\m9_m8_ml_activity_matched.csv

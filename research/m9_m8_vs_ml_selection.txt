@@ -1,0 +1,25 @@
+MERIT M8 vs ML candidate-selection comparison
+=======================================================
+Rows after feature validation: 269,664
+Train rows: 183,788
+Test rows: 85,762
+Boundary timestamp_ns: 52964404078135
+Embargo: 2,000,000,000 ns
+Frozen M8 threshold: 0.00957966
+Training M8 selection rate: 11.000174%
+ML threshold (training only): -0.28317346
+Test FILL-probability ROC AUC: 0.687225
+
+                             policy  selected_candidates  selection_rate_pct  full_fill_rate_pct  adverse_rate_pct  timeout_rate_pct
+                All test candidates                85762            100.0000              6.9017           46.7783           46.3200
+                          Frozen M8                14405             16.7965              5.1649           41.6800           53.1552
+ML, matched training selection rate                13231             15.4276             14.5794           21.2909           64.1297
+
+Interpretation limits:
+- One trading date; exploratory temporal holdout only.
+- Outcome rates are not net P&L.
+- ADVERSE and TIMEOUT candidates may have partial fills.
+- The ML score ranks P(FILL) - P(ADVERSE); it is not a calibrated utility.
+- No policy threshold was selected using test outcomes.
+
+Candidate-level output: research\m9_m8_vs_ml_selection.csv

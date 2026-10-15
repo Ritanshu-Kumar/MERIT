@@ -1,0 +1,65 @@
+MERIT: M8 vs ML markout diagnostic
+=================================================================
+Rows: 269,664
+Train rows: 183,788
+Test rows: 85,762
+Split boundary timestamp_ns: 52964404078135
+M8-selected test candidates: 14,405
+ML-selected test candidates: 14,405
+
+Conditional markout summary
+                     policy horizon  selected_candidates  full_fill_count  full_fill_rate_pct  markout_observations  markout_coverage_pct_of_full_fills  mean_favorable_markout_bps  mean_markout_ci95_low  mean_markout_ci95_high  median_favorable_markout_bps  positive_markout_pct
+        All test candidates    10ms                85762             5919              6.9017                  5919                            100.0000                      0.2654                -0.2554                  1.3177                        0.0000               41.2063
+                  Frozen M8    10ms                14405              744              5.1649                   744                            100.0000                      3.2337                -0.5756                  6.6560                        1.8570               74.4624
+ML matched by symbol + side    10ms                14405             1047              7.2683                  1047                            100.0000                      2.1392                -0.3600                  6.2510                        0.2399               63.9924
+        All test candidates   100ms                85762             5919              6.9017                  5919                            100.0000                      0.1450                -0.2867                  0.8562                        0.0000               42.2369
+                  Frozen M8   100ms                14405              744              5.1649                   744                            100.0000                      2.1769                -0.7399                  4.6418                        2.5701               74.3280
+ML matched by symbol + side   100ms                14405             1047              7.2683                  1047                            100.0000                      1.2908                -0.4283                  3.8717                        0.4786               64.0879
+        All test candidates   500ms                85762             5919              6.9017                  5919                            100.0000                      0.1928                -0.2556                  0.7402                        0.0000               42.1186
+                  Frozen M8   500ms                14405              744              5.1649                   744                            100.0000                      1.6463                -0.7201                  3.7112                        2.8980               65.8602
+ML matched by symbol + side   500ms                14405             1047              7.2683                  1047                            100.0000                      1.0506                -0.7596                  3.1801                        0.4786               60.9360
+        All test candidates      1s                85762             5919              6.9017                  5919                            100.0000                      0.2168                -0.2583                  0.9559                       -0.2393               44.5514
+                  Frozen M8      1s                14405              744              5.1649                   744                            100.0000                      1.7963                -1.3551                  4.8200                        2.8913               69.3548
+ML matched by symbol + side      1s                14405             1047              7.2683                  1047                            100.0000                      1.1675                -0.9574                  4.0601                        0.9660               64.3744
+
+ML minus M8 conditional markout
+horizon  ml_minus_m8_mean_markout_bps  difference_ci95_low  difference_ci95_high
+   10ms                       -1.0945              -2.1168                0.5337
+  100ms                       -0.8861              -2.1686                0.4416
+  500ms                       -0.5957              -1.6551                0.4492
+     1s                       -0.6288              -1.9793                1.0028
+
+Per-symbol/side summary at 1 second
+symbol quote_side     policy  selected  full_fills  full_fill_rate_pct  markout_observations_1s  mean_favorable_markout_1s_bps  positive_markout_1s_pct
+  AAPL        BUY  Frozen M8      3446          83              2.4086                       83                         3.8198                  79.5181
+  AAPL        BUY ML matched      3446         112              3.2501                      112                         0.4660                  85.7143
+  AAPL       SELL  Frozen M8      4357         395              9.0659                      395                         3.5322                  85.0633
+  AAPL       SELL ML matched      4357         543             12.4627                      543                         2.5662                  72.0074
+  AMZN        BUY  Frozen M8       515           2              0.3883                        2                        -1.1584                   0.0000
+  AMZN        BUY ML matched       515           1              0.1942                        1                         0.5530                 100.0000
+  AMZN       SELL  Frozen M8       539           0              0.0000                        0                            NaN                      NaN
+  AMZN       SELL ML matched       539          14              2.5974                       14                        -0.3427                   0.0000
+  GOOG        BUY  Frozen M8       559           1              0.1789                        1                         1.3876                 100.0000
+  GOOG        BUY ML matched       559           0              0.0000                        0                            NaN                      NaN
+  GOOG       SELL  Frozen M8       575           0              0.0000                        0                            NaN                      NaN
+  GOOG       SELL ML matched       575           0              0.0000                        0                            NaN                      NaN
+  INTC        BUY  Frozen M8      1997         164              8.2123                      164                        -2.5447                  18.2927
+  INTC        BUY ML matched      1997         239             11.9680                      239                        -1.3214                  26.3598
+  INTC       SELL  Frozen M8      2012          56              2.7833                       56                        -0.3291                  75.0000
+  INTC       SELL ML matched      2012          78              3.8767                       78                        -0.0744                  80.7692
+  MSFT        BUY  Frozen M8       138          42             30.4348                       42                         1.3741                  95.2381
+  MSFT        BUY ML matched       138          56             40.5797                       56                         1.7811                 100.0000
+  MSFT       SELL  Frozen M8       267           1              0.3745                        1                         3.2044                 100.0000
+  MSFT       SELL ML matched       267           4              1.4981                        4                         0.7132                 100.0000
+
+Interpretation limits:
+- Positive markout means favorable to the passive quote.
+- Markouts are conditional on completed full fills.
+- Partial-fill P&L and unfilled candidates are not valued here.
+- Fees, inventory costs, hedging, and exit costs are excluded.
+- Confidence intervals resample 60-second fill-time blocks; they do not
+  capture model refitting uncertainty or independent-day variation.
+- One trading date only; results remain exploratory.
+
+Summary saved to: research\m9_m8_ml_markout_summary.csv
+Stratum summary saved to: research\m9_m8_ml_markout_by_symbol_side.csv
