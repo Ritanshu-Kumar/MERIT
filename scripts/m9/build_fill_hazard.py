@@ -6,10 +6,11 @@ import heapq
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
-import m9_build_state_transitions as m9
-
+if __package__:
+    from . import build_state_transitions as m9
+else:
+    import build_state_transitions as m9
 
 TARGET_SYMBOLS = {
     "AAPL",
@@ -49,6 +50,8 @@ OUTPUT_COLUMNS = [
     "fill_fraction",
     "time_to_resolution_ns",
     "resolution_mid",
+    "resolution_mid_timestamp_ns",
+    "resolution_mid_age_ns",
     "adverse_threshold",
     "level_resets",
     "outcome",
@@ -98,13 +101,14 @@ class Candidate:
 
     level_resets: int = 0
     status: str = "ACTIVE"
-    resolved_timestamp_ns: Optional[int] = None
-    resolution_mid: Optional[float] = None
+    resolved_timestamp_ns: int | None = None
+    resolution_mid: float | None = None
+    resolution_mid_timestamp_ns: int | None = None
 
     required_execution_volume: int = 0
-    fill_timestamp_ns: Optional[int] = None
-    future_mids: Optional[dict[str, Optional[float]]] = None
-    markout_resolved: Optional[dict[str, bool]] = None
+    fill_timestamp_ns: int | None = None
+    future_mids: dict[str, float | None] | None = None
+    markout_resolved: dict[str, bool] | None = None
 
     def __post_init__(self) -> None:
         if self.future_mids is None:
@@ -122,6 +126,10 @@ class Candidate:
 class HazardEngine:
     def __init__(self) -> None:
         self.next_id = 0
+        # Latest post-event midpoint per stock, with its exchange timestamp.
+        # Timeout valuation must never borrow another symbol's midpoint or
+        # use an observation from after the candidate's expiry.
+        self.latest_mid_by_locate: dict[int, tuple[int, float]] = {}
 
         self.candidates: dict[
             int,
@@ -198,7 +206,7 @@ class HazardEngine:
         self,
         candidate: Candidate,
         timestamp_ns: int,
-        resolution_mid: Optional[float],
+        resolution_mid: float | None,
     ) -> None:
         if candidate.status != "ACTIVE":
             return
@@ -209,6 +217,9 @@ class HazardEngine:
             timestamp_ns
         )
         candidate.resolution_mid = resolution_mid
+        candidate.resolution_mid_timestamp_ns = (
+            timestamp_ns if resolution_mid is not None else None
+        )
 
         self._remove_active(candidate)
         candidate.fill_timestamp_ns = timestamp_ns
@@ -392,7 +403,7 @@ class HazardEngine:
         price: int,
         shares: int,
         timestamp_ns: int,
-        current_mid: Optional[float],
+        current_mid: float | None,
     ) -> None:
         key = self.level_key(
             stock_locate,
@@ -443,7 +454,7 @@ class HazardEngine:
         resting_side: str,
         price: int,
         timestamp_ns: int,
-        current_mid: Optional[float],
+        current_mid: float | None,
     ) -> None:
         key = self.level_key(
             stock_locate,
@@ -538,7 +549,7 @@ class HazardEngine:
     def resolve_adverse(
         self,
         stock_locate: int,
-        current_mid: Optional[float],
+        current_mid: float | None,
         timestamp_ns: int,
     ) -> None:
         if current_mid is None:
@@ -593,8 +604,9 @@ class HazardEngine:
             candidate.resolved_timestamp_ns = (
                 timestamp_ns
             )
-            candidate.resolution_mid = (
-                current_mid
+            candidate.resolution_mid = current_mid
+            candidate.resolution_mid_timestamp_ns = (
+                timestamp_ns if current_mid is not None else None
             )
 
             self._remove_active(candidate)
@@ -647,8 +659,9 @@ class HazardEngine:
             candidate.resolved_timestamp_ns = (
                 timestamp_ns
             )
-            candidate.resolution_mid = (
-                current_mid
+            candidate.resolution_mid = current_mid
+            candidate.resolution_mid_timestamp_ns = (
+                timestamp_ns if current_mid is not None else None
             )
 
             self._remove_active(candidate)
@@ -657,6 +670,7 @@ class HazardEngine:
     def resolve_timeouts_before(
         self,
         timestamp_ns: int,
+        current_mid: float | None = None,
     ) -> None:
         while self.expiry_heap:
             expiry, candidate_id = (
@@ -702,7 +716,20 @@ class HazardEngine:
             candidate.resolved_timestamp_ns = (
                 candidate.expiry_ns
             )
-            candidate.resolution_mid = None
+            cached_mid = self.latest_mid_by_locate.get(
+                candidate.stock_locate
+            )
+            if (
+                cached_mid is not None
+                and cached_mid[0] <= candidate.expiry_ns
+            ):
+                (
+                    candidate.resolution_mid_timestamp_ns,
+                    candidate.resolution_mid,
+                ) = cached_mid
+            else:
+                candidate.resolution_mid_timestamp_ns = None
+                candidate.resolution_mid = None
 
             self._remove_active(candidate)
             self.completed.append(candidate)
@@ -710,6 +737,7 @@ class HazardEngine:
     def resolve_timeouts_at_or_before(
         self,
         timestamp_ns: int,
+        current_mid: float | None = None,
     ) -> None:
         while self.expiry_heap:
             expiry, candidate_id = (
@@ -755,7 +783,20 @@ class HazardEngine:
             candidate.resolved_timestamp_ns = (
                 candidate.expiry_ns
             )
-            candidate.resolution_mid = None
+            cached_mid = self.latest_mid_by_locate.get(
+                candidate.stock_locate
+            )
+            if (
+                cached_mid is not None
+                and cached_mid[0] <= candidate.expiry_ns
+            ):
+                (
+                    candidate.resolution_mid_timestamp_ns,
+                    candidate.resolution_mid,
+                ) = cached_mid
+            else:
+                candidate.resolution_mid_timestamp_ns = None
+                candidate.resolution_mid = None
 
             self._remove_active(candidate)
             self.completed.append(candidate)
@@ -764,7 +805,7 @@ class HazardEngine:
         self,
         stock_locate: int,
         timestamp_ns: int,
-        current_mid: Optional[float],
+        current_mid: float | None,
     ) -> None:
         if current_mid is None:
             return
@@ -821,7 +862,7 @@ def cancel_order(
     book: m9.OrderBook,
     order_ref: int,
     shares: int,
-) -> Optional[m9.Order]:
+) -> m9.Order | None:
     order = book.orders.get(order_ref)
 
     if order is None:
@@ -899,8 +940,16 @@ def candidate_to_row(
             candidate.resolved_timestamp_ns
             - candidate.timestamp_ns
         ),
-        "resolution_mid": (
-            candidate.resolution_mid
+        "resolution_mid": candidate.resolution_mid,
+        "resolution_mid_timestamp_ns": (
+            candidate.resolution_mid_timestamp_ns
+        ),
+        "resolution_mid_age_ns": (
+            candidate.resolved_timestamp_ns
+            - candidate.resolution_mid_timestamp_ns
+            if candidate.resolved_timestamp_ns is not None
+            and candidate.resolution_mid_timestamp_ns is not None
+            else None
         ),
         "adverse_threshold": (
             candidate.adverse_threshold
@@ -935,7 +984,7 @@ def write_completed(
 def run(
     input_path: Path,
     output_path: Path,
-    max_messages: Optional[int],
+    max_messages: int | None,
 ) -> None:
     locate_to_symbol = (
         m9.discover_stock_locates(
@@ -1031,18 +1080,23 @@ def run(
 
             book = books[stock_locate]
 
+            pre_state = book.snapshot()
+
             # Candidates whose exact one-second horizon has
             # already passed cannot interact with this event.
             engine.resolve_timeouts_before(
-                timestamp_ns
+                timestamp_ns,
+                current_mid=(
+                    pre_state.mid
+                    if pre_state is not None
+                    else None
+                ),
             )
 
             completed_count += write_completed(
                 writer,
                 engine,
             )
-
-            pre_state = book.snapshot()
 
             # Save the exact pre-event best quote and level epochs.
             pre_quotes: dict[
@@ -1080,7 +1134,7 @@ def run(
 
             # Capture the order involved in the current message
             # before mutating the book.
-            resting_order: Optional[m9.Order] = None
+            resting_order: m9.Order | None = None
             execution_shares = 0
 
             if message_type in {"E", "C"}:
@@ -1112,24 +1166,7 @@ def run(
                         (side, price)
                     )
 
-            elif message_type == "D":
-                order_ref = (
-                    m9.parse_order_ref(msg)
-                )
-
-                existing = book.orders.get(
-                    order_ref
-                )
-
-                if existing is not None:
-                    affected_levels.add(
-                        (
-                            existing.side,
-                            existing.price,
-                        )
-                    )
-
-            elif message_type == "X":
+            elif message_type == "D" or message_type == "X":
                 order_ref = (
                     m9.parse_order_ref(msg)
                 )
@@ -1278,6 +1315,12 @@ def run(
 
             post_state = book.snapshot()
 
+            if post_state is not None:
+                engine.latest_mid_by_locate[stock_locate] = (
+                    timestamp_ns,
+                    post_state.mid,
+                )
+
             engine.resolve_post_fill_markouts(
                 stock_locate=stock_locate,
                 timestamp_ns=timestamp_ns,
@@ -1366,7 +1409,12 @@ def run(
             # At the exact timeout timestamp, a fill/adverse event
             # on this message wins; unresolved candidates timeout.
             engine.resolve_timeouts_at_or_before(
-                timestamp_ns
+                timestamp_ns,
+                current_mid=(
+                    post_state.mid
+                    if post_state is not None
+                    else None
+                ),
             )
 
             completed_count += write_completed(
