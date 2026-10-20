@@ -309,12 +309,6 @@ def main() -> None:
             ]
         ).copy()
 
-        test_with_fill_prob = test_fill[
-            test_fill.index.isin(
-                test_fill.index
-            )
-        ].copy()
-
         # Align prediction dataframe with the
         # test candidates that have fill probabilities.
         test_candidates = test_fill.copy()

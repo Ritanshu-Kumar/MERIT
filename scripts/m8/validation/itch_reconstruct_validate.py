@@ -135,7 +135,7 @@ class Book:
         spread = ask - bid
 
         if spread <= 0:
-            self_crossed += 1
+            self.self_crossed += 1
 
         if self.min_spread is None or spread < self.min_spread:
             self.min_spread = spread

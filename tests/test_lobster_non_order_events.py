@@ -1,6 +1,5 @@
 from datetime import date
 
-import pytest
 
 from merit.data.lobster import read_messages
 

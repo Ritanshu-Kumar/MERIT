@@ -1088,12 +1088,6 @@ def main():
             features,
         )
 
-        p_fit = predict_hazard(
-            preprocessor,
-            model,
-            fit_pp,
-        )
-
         p_cal = predict_hazard(
             preprocessor,
             model,

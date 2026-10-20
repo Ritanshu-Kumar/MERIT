@@ -20,12 +20,36 @@ def signed_markout_bps(
     quote_price: pd.Series,
     future_mid: pd.Series,
 ) -> pd.Series:
-    signed = np.where(
-        quote_side.eq("BUY"),
-        future_mid - quote_price,
-        quote_price - future_mid,
+    """Calculate favorable-positive signed markout in basis points."""
+    side = quote_side.astype(str).str.upper()
+    quote = pd.to_numeric(quote_price, errors="coerce")
+    future = pd.to_numeric(future_mid, errors="coerce")
+
+    valid = (
+        side.isin(["BUY", "SELL"])
+        & quote.gt(0)
+        & np.isfinite(quote)
+        & np.isfinite(future)
     )
-    return signed / quote_price * 10_000.0
+
+    result = pd.Series(np.nan, index=quote.index, dtype=float)
+
+    buy = side.eq("BUY")
+    sell = side.eq("SELL")
+
+    result.loc[valid & buy] = (
+        (future.loc[valid & buy] - quote.loc[valid & buy])
+        / quote.loc[valid & buy]
+        * 10_000.0
+    )
+
+    result.loc[valid & sell] = (
+        (quote.loc[valid & sell] - future.loc[valid & sell])
+        / quote.loc[valid & sell]
+        * 10_000.0
+    )
+
+    return result
 
 
 def main() -> None:
@@ -48,16 +72,42 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if not args.input.exists():
+        raise FileNotFoundError(f"Input file not found: {args.input}")
+
     df = pd.read_csv(args.input)
-    fills = df[df["outcome"].eq("FILL")].copy()
+
+    required = {"outcome", "quote_side", "quote_price"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
+
+    fills = df.loc[df["outcome"].eq("FILL")].copy()
 
     if fills.empty:
         raise RuntimeError("No completed fills found.")
 
+    invalid_sides = ~fills["quote_side"].astype(str).str.upper().isin(
+        ["BUY", "SELL"]
+    )
+    if invalid_sides.any():
+        raise ValueError(
+            f"{int(invalid_sides.sum())} fill rows have invalid quote_side values."
+        )
+
     rows: list[dict[str, object]] = []
 
     for horizon, column in HORIZONS.items():
-        valid = fills[fills[column].notna()].copy()
+        if column not in fills.columns:
+            print(f"Skipping {horizon}: missing column {column}")
+            continue
+
+        valid = fills.loc[
+            fills[column].notna()
+            & fills["quote_price"].notna()
+            & fills["quote_price"].gt(0)
+        ].copy()
+
         if valid.empty:
             continue
 
@@ -67,36 +117,47 @@ def main() -> None:
             valid[column],
         )
 
-        rows.append(
-            {
-                "horizon": horizon,
-                "n": len(valid),
-                "mean_bps": float(markout.mean()),
-                "median_bps": float(markout.median()),
-                "std_bps": float(markout.std(ddof=1)),
-                "positive_fraction": float((markout > 0).mean()),
-            }
+        valid = valid.assign(markout_bps=markout).dropna(
+            subset=["markout_bps"]
         )
 
-        for side in ("BUY", "SELL"):
-            side_mask = valid["quote_side"].eq(side)
-            side_markout = markout[side_mask]
+        def add_summary(label: str, subset: pd.DataFrame) -> None:
+            values = subset["markout_bps"]
             rows.append(
                 {
-                    "horizon": f"{horizon}_{side}",
-                    "n": len(side_markout),
-                    "mean_bps": float(side_markout.mean()),
-                    "median_bps": float(side_markout.median()),
-                    "std_bps": float(side_markout.std(ddof=1)),
-                    "positive_fraction": float((side_markout > 0).mean()),
+                    "horizon": label,
+                    "n": len(values),
+                    "mean_bps": float(values.mean()) if len(values) else np.nan,
+                    "median_bps": float(values.median()) if len(values) else np.nan,
+                    "std_bps": (
+                        float(values.std(ddof=1))
+                        if len(values) > 1
+                        else np.nan
+                    ),
+                    "positive_fraction": (
+                        float(values.gt(0).mean())
+                        if len(values)
+                        else np.nan
+                    ),
                 }
             )
+
+        add_summary(horizon, valid)
+
+        for side in ("BUY", "SELL"):
+            add_summary(
+                f"{horizon}_{side}",
+                valid.loc[valid["quote_side"].eq(side)],
+            )
+
+    if not rows:
+        raise RuntimeError("No valid markouts could be calculated.")
 
     summary = pd.DataFrame(rows)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     summary.to_csv(args.output, index=False)
 
-    print("Fill markout summary")
+    print("Fill markout summary — favorable-positive convention")
     print(summary.to_string(index=False))
     print(f"\nSaved: {args.output}")
 

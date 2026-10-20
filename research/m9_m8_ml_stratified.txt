@@ -1,0 +1,53 @@
+MERIT: Stratified M8 vs ML comparison
+==========================================================
+
+Overall outcomes
+                     policy  selected  selection_rate_pct  full_fill_rate_pct  adverse_rate_pct  timeout_rate_pct
+        All test candidates     85762            100.0000              6.9017           46.7783           46.3200
+                  Frozen M8     14405             16.7965              5.1649           41.6800           53.1552
+ML matched by symbol + side     14405             16.7965              7.2683           27.5876           65.1440
+
+Selection-count audit by symbol and side
+symbol quote_side  test_candidates  m8_selected  ml_selected
+  AAPL        BUY            22619         3446         3446
+  AAPL       SELL            22619         4357         4357
+  AMZN        BUY             3902          515          515
+  AMZN       SELL             3902          539          539
+  GOOG        BUY             2802          559          559
+  GOOG       SELL             2802          575          575
+  INTC        BUY             6008         1997         1997
+  INTC       SELL             6008         2012         2012
+  MSFT        BUY             7550          138          138
+  MSFT       SELL             7550          267          267
+
+Outcome breakdown by symbol and side
+symbol quote_side     policy  selected  full_fill_rate_pct  adverse_rate_pct  timeout_rate_pct
+  AAPL        BUY  Frozen M8      3446              2.4086           63.7841           33.8073
+  AAPL        BUY ML matched      3446              3.2501           27.9164           68.8334
+  AAPL       SELL  Frozen M8      4357              9.0659           59.6970           31.2371
+  AAPL       SELL ML matched      4357             12.4627           36.3323           51.2050
+  AMZN        BUY  Frozen M8       515              0.3883           32.6214           66.9903
+  AMZN        BUY ML matched       515              0.1942           54.3689           45.4369
+  AMZN       SELL  Frozen M8       539              0.0000           32.2820           67.7180
+  AMZN       SELL ML matched       539              2.5974           53.6178           43.7848
+  GOOG        BUY  Frozen M8       559              0.1789           45.7961           54.0250
+  GOOG        BUY ML matched       559              0.0000           55.9928           44.0072
+  GOOG       SELL  Frozen M8       575              0.0000           41.9130           58.0870
+  GOOG       SELL ML matched       575              0.0000           40.1739           59.8261
+  INTC        BUY  Frozen M8      1997              8.2123            3.9059           87.8818
+  INTC        BUY ML matched      1997             11.9680            8.0621           79.9700
+  INTC       SELL  Frozen M8      2012              2.7833            5.1193           92.0974
+  INTC       SELL ML matched      2012              3.8767            3.7276           92.3956
+  MSFT        BUY  Frozen M8       138             30.4348           28.9855           40.5797
+  MSFT        BUY ML matched       138             40.5797           16.6667           42.7536
+  MSFT       SELL  Frozen M8       267              0.3745           54.3071           45.3184
+  MSFT       SELL ML matched       267              1.4981           21.3483           77.1536
+
+Limitations:
+- Single trading date; exploratory result only.
+- ML ranks test candidates retrospectively using scores, not outcomes.
+- Matching group counts controls symbol and side mix, not every market condition.
+- Candidate outcomes are not net P&L; partial fills still require valuation.
+- Candidates overlap in time and may not be independent.
+
+Selected candidates saved to: research\m9_m8_ml_stratified.csv

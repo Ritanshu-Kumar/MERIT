@@ -139,6 +139,19 @@ class Book:
         price = self.best_ask()
         return 0 if price is None else self.asks[price]
 
+    def orders_at_price(
+        self,
+        side: str,
+        price: int,
+    ) -> dict[int, int]:
+        return {
+            order_id: order.quantity
+            for order_id, order in self.orders.items()
+            if order.side == side
+            and order.price == price
+            and order.quantity > 0
+        }
+
     def add(
         self,
         order_id: int,
@@ -239,6 +252,7 @@ class Book:
 class Quote:
     price: int
     remaining: int
+    ahead_orders: dict[int, int]
 
 
 @dataclass
@@ -453,6 +467,7 @@ def update_quotes(
             strategy.quotes[symbol]["B"] = Quote(
                 price=bid,
                 remaining=ORDER_QUANTITY,
+                ahead_orders=book.orders_at_price("B", bid),
             )
     else:
         strategy.quotes[symbol]["B"] = None
@@ -469,6 +484,7 @@ def update_quotes(
             strategy.quotes[symbol]["S"] = Quote(
                 price=ask,
                 remaining=ORDER_QUANTITY,
+                ahead_orders=book.orders_at_price("S", ask),
             )
     else:
         strategy.quotes[symbol]["S"] = None
@@ -528,6 +544,7 @@ def process_execution(
     strategy: StrategyState,
     symbol: str,
     resting_side: str,
+    public_order_id: int,
     execution_price: int,
     quantity: int,
 ) -> tuple[
@@ -535,7 +552,7 @@ def process_execution(
     str | None,
     int,
 ]:
-    if resting_side == "S":
+    if resting_side == "B":
         quote = (
             strategy.quotes[symbol]["B"]
         )
@@ -557,6 +574,20 @@ def process_execution(
     if quote.remaining <= 0:
         return False, None, 0
 
+    # If this public order was ahead of our quote,
+    # its execution consumes queue ahead, not our order.
+    ahead_remaining = quote.ahead_orders.get(public_order_id)
+    if ahead_remaining is not None:
+        left = ahead_remaining - min(quantity, ahead_remaining)
+        if left <= 0:
+            del quote.ahead_orders[public_order_id]
+        else:
+            quote.ahead_orders[public_order_id] = left
+        return False, None, 0
+
+    # This public order was not in the queue snapshot.
+    # Under the FIFO approximation, it joined behind us,
+    # so an execution against it reaches our quote first.
     fill_quantity = min(
         quantity,
         quote.remaining,
@@ -587,6 +618,28 @@ def process_execution(
         fill_side,
         fill_quantity,
     )
+
+
+def process_queue_cancel(
+    strategy: StrategyState,
+    symbol: str,
+    resting_side: str,
+    public_order_id: int,
+    price: int,
+    quantity: int,
+) -> None:
+    quote_key = "B" if resting_side == "B" else "S"
+    quote = strategy.quotes[symbol][quote_key]
+    if quote is None or quote.price != price:
+        return
+    ahead_remaining = quote.ahead_orders.get(public_order_id)
+    if ahead_remaining is None:
+        return
+    left = ahead_remaining - quantity
+    if left <= 0:
+        del quote.ahead_orders[public_order_id]
+    else:
+        quote.ahead_orders[public_order_id] = left
 
 
 def main() -> None:
@@ -793,16 +846,9 @@ def main() -> None:
                 if order is not None:
                     execution_messages += 1
 
-                    execution_price = (
-                        order.price
-                    )
-
-                    if message_type == "C":
-                        execution_price = read_uint(
-                            payload,
-                            32,
-                            4,
-                        )
+                    # Match against the resting order's displayed limit price.
+                    # A C-message trade price can differ from that limit price.
+                    execution_price = order.price
 
                     for strategy in (
                         baseline,
@@ -816,6 +862,7 @@ def main() -> None:
                             strategy,
                             symbol,
                             order.side,
+                            order_id,
                             execution_price,
                             quantity,
                         )
@@ -870,6 +917,9 @@ def main() -> None:
                                     ),
                                 }
                             )
+
+                    # Apply the public execution to the reconstructed book.
+                    book.execute(order_id, quantity)
 
             if message_type == "A":
                 order_id = read_uint(
@@ -944,6 +994,21 @@ def main() -> None:
                     4,
                 )
 
+                order = book.orders.get(order_id)
+                if order is not None:
+                    for strategy in (
+                        baseline,
+                        m8,
+                    ):
+                        process_queue_cancel(
+                            strategy,
+                            symbol,
+                            order.side,
+                            order_id,
+                            order.price,
+                            quantity,
+                        )
+
                 book.execute(
                     order_id,
                     quantity,
@@ -955,6 +1020,21 @@ def main() -> None:
                     11,
                     8,
                 )
+
+                order = book.orders.get(order_id)
+                if order is not None:
+                    for strategy in (
+                        baseline,
+                        m8,
+                    ):
+                        process_queue_cancel(
+                            strategy,
+                            symbol,
+                            order.side,
+                            order_id,
+                            order.price,
+                            order.quantity,
+                        )
 
                 book.delete(
                     order_id
@@ -984,6 +1064,21 @@ def main() -> None:
                     31,
                     4,
                 )
+
+                old_order = book.orders.get(old_order_id)
+                if old_order is not None:
+                    for strategy in (
+                        baseline,
+                        m8,
+                    ):
+                        process_queue_cancel(
+                            strategy,
+                            symbol,
+                            old_order.side,
+                            old_order_id,
+                            old_order.price,
+                            old_order.quantity,
+                        )
 
                 book.replace(
                     old_order_id,

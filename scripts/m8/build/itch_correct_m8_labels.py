@@ -5,7 +5,6 @@ import argparse
 
 import pandas as pd
 
-
 THRESHOLD = 0.00957966
 
 
@@ -29,8 +28,8 @@ def main() -> None:
     # ITCH side is the resting order's side.
     # The passive quote is on the opposite side.
     df["quote_side"] = df["side"].map({
-        "S": "BUY",
         "B": "SELL",
+        "S": "BUY",
     })
 
     if df["quote_side"].isna().any():

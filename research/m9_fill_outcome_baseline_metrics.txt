@@ -1,0 +1,59 @@
+MERIT M9 three-class fill-outcome baseline
+Target: outcome (ADVERSE / FILL / TIMEOUT)
+Predictors: imbalance, relative_spread, delta_imbalance, delta_microprice, delta_spread, queue_log, symbol, quote_side
+Excluded by design: fill_before_adverse, filled_qty, fill_fraction, time_to_resolution_ns, resolution_mid, level_resets, fill_timestamp_ns, all future_mid_* columns, adverse_threshold
+Rows loaded: 269,664
+Unique timestamps: 82,171
+Boundary timestamp_ns: 52964404078135
+Embargo: 2,000,000,000 ns (2 seconds)
+Train rows: 183,788; test rows: 85,762; excluded rows: 114
+
+Train outcome counts:
+outcome
+ADVERSE    81042
+FILL        7871
+TIMEOUT    94875
+
+Test outcome counts:
+outcome
+ADVERSE    40118
+FILL        5919
+TIMEOUT    39725
+
+Test metrics (majority-class baseline):
+Majority label: TIMEOUT
+Balanced accuracy: 0.333333
+Macro F1: 0.211044
+Log loss (training class priors): 0.906750
+
+Test metrics (regularized logistic regression):
+Balanced accuracy: 0.486705
+Macro F1: 0.439737
+Log loss: 0.975258
+
+Classification report:
+              precision    recall  f1-score   support
+
+     ADVERSE     0.6441    0.4116    0.5022     40118
+        FILL     0.1425    0.4234    0.2132      5919
+     TIMEOUT     0.5838    0.6252    0.6038     39725
+
+    accuracy                         0.5113     85762
+   macro avg     0.4568    0.4867    0.4397     85762
+weighted avg     0.5815    0.5113    0.5293     85762
+
+
+Confusion matrix (rows=true, columns=predicted; order ADVERSE, FILL, TIMEOUT):
+[[16511  8585 15022]
+ [  733  2506  2680]
+ [ 8392  6498 24835]]
+
+Test fill rate by symbol (%):
+symbol
+AAPL     5.1130
+AMZN     0.3588
+GOOG     0.0892
+INTC    17.1937
+MSFT     9.9801
+
+Caution: one trading date only; this is an exploratory within-day temporal holdout, not independent-day validation or proof of policy P&L improvement.

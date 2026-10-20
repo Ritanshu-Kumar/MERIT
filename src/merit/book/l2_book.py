@@ -14,7 +14,7 @@ from merit.portfolio.enums import OrderSide
 
 @dataclass
 class BookOrder:
-    order_id: int
+    order_id: int | str
     side: str
     price: Decimal
     quantity: int
@@ -26,7 +26,7 @@ class L2OrderBook:
             raise ValueError("symbol cannot be empty")
 
         self.symbol = symbol
-        self._orders: dict[int, BookOrder] = {}
+        self._orders: dict[int | str, BookOrder] = {}
         self._bids: dict[Decimal, int] = {}
         self._asks: dict[Decimal, int] = {}
 
@@ -120,7 +120,7 @@ class L2OrderBook:
 
         return bids, asks
 
-    def order(self, order_id: int) -> BookOrder | None:
+    def order(self, order_id: int | str) -> BookOrder | None:
         return self._orders.get(order_id)
 
     def order_count(self) -> int:
@@ -192,7 +192,7 @@ class L2OrderBook:
         self._orders[new_order.order_id] = new_order
         self._update_level(new_order, new_order.quantity)
 
-    def _get_order(self, order_id: int) -> BookOrder:
+    def _get_order(self, order_id: int | str) -> BookOrder:
         order = self._orders.get(order_id)
 
         if order is None:

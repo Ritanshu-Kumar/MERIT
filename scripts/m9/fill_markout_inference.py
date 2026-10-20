@@ -42,18 +42,41 @@ def bootstrap_block_mean(
     rng: np.random.Generator,
     reps: int,
 ) -> tuple[float, float, float]:
-    unique_blocks = np.unique(block_ids)
-    grouped = [values[block_ids == block] for block in unique_blocks]
-    means = np.array([group.mean() for group in grouped], dtype=float)
-    weights = np.array([len(group) for group in grouped], dtype=float)
-    weights /= weights.sum()
+    """Block bootstrap of the observation-weighted mean.
 
-    observed = float(np.average(means, weights=weights))
+    Resamples whole blocks with replacement. Each sampled block contributes
+    all its observations, and the bootstrap mean is computed over the pooled
+    observations in that replicate.
+    """
+    values = np.asarray(values, dtype=float)
+    block_ids = np.asarray(block_ids)
+
+    valid = np.isfinite(values) & pd.notna(block_ids)
+    values = values[valid]
+    block_ids = block_ids[valid]
+
+    if len(values) == 0:
+        raise ValueError("No valid observations for block bootstrap.")
+    if reps < 1:
+        raise ValueError("reps must be at least 1.")
+
+    unique_blocks = np.unique(block_ids)
+    grouped = [
+        values[block_ids == block]
+        for block in unique_blocks
+    ]
+    grouped = [group for group in grouped if len(group)]
+
+    if not grouped:
+        raise ValueError("No non-empty blocks for block bootstrap.")
+
+    observed = float(np.mean(values))
     boot = np.empty(reps, dtype=float)
 
     for i in range(reps):
-        picks = rng.choice(len(grouped), size=len(grouped), replace=True, p=None)
-        boot[i] = float(np.average(means[picks], weights=weights[picks]))
+        picks = rng.integers(0, len(grouped), size=len(grouped))
+        sampled_values = np.concatenate([grouped[j] for j in picks])
+        boot[i] = float(np.mean(sampled_values))
 
     lo, hi = np.quantile(boot, [0.025, 0.975])
     return observed, float(lo), float(hi)

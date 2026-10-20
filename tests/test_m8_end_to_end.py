@@ -21,8 +21,6 @@ BASE = datetime(2012, 6, 21, 9, 30)
 def test_end_to_end_research_pipeline() -> None:
     t0 = BASE
     t1 = BASE + timedelta(milliseconds=100)
-    t2 = BASE + timedelta(seconds=1)
-    t3 = BASE + timedelta(seconds=5)
 
     events = (
         OrderAddEvent(

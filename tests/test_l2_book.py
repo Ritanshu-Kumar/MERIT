@@ -247,3 +247,22 @@ def test_negative_level_quantity_is_impossible() -> None:
 
     with pytest.raises(ValueError):
         book.apply(cancel(1, 101))
+
+
+def test_snapshot_supports_synthetic_string_order_ids() -> None:
+    book = L2OrderBook("AAPL")
+    book.load_snapshot(
+        bids=(
+            (Decimal("150.00"), 100),
+            (Decimal("149.90"), 50),
+        ),
+        asks=((Decimal("150.10"), 80),),
+    )
+
+    order = book.order("__snapshot_bid_0")
+
+    assert order is not None
+    assert order.order_id == "__snapshot_bid_0"
+    assert book.best_bid() == (Decimal("150.00"), 100)
+    assert book.best_ask() == (Decimal("150.10"), 80)
+    assert book.order_count() == 3

@@ -17,7 +17,6 @@ from merit.research.targets import (
     build_mid_price_index,
     calculate_fill_markout,
 )
-from merit.strategy.baseline import QuoteDecision
 from merit.strategy.m8 import M8MarketMaker
 
 
@@ -265,15 +264,6 @@ def replay_candidate(
     candidate: Candidate,
     maker: M8MarketMaker,
 ) -> tuple[ReplayResult, ReplayResult]:
-    baseline = QuoteDecision(
-        bid_price=candidate.price
-        if candidate.side == OrderSide.BUY
-        else None,
-        ask_price=candidate.price
-        if candidate.side == OrderSide.SELL
-        else None,
-        quantity=ORDER_QUANTITY,
-    )
 
     m8_decision = maker.quote(
         candidate.features,
@@ -283,17 +273,12 @@ def replay_candidate(
         + candidate.features.spread / Decimal("2"),
     )
 
-    baseline_price = (
-        baseline.bid_price
-        if candidate.side == OrderSide.BUY
-        else baseline.ask_price
-    )
-
     m8_price = (
         m8_decision.bid_price
         if candidate.side == OrderSide.BUY
         else m8_decision.ask_price
     )
+
 
     return (
         ReplayResult(

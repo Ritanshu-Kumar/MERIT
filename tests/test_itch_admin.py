@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import date
 
 from merit.data.normalized import (
     MarketEventType,

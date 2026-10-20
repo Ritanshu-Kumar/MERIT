@@ -14,7 +14,6 @@ from merit.execution.queue_model import QueueModel
 from merit.features.snapshot import (
     build_feature_snapshot_from_levels,
 )
-from merit.portfolio.enums import OrderSide
 from merit.portfolio.portfolio import Portfolio
 from merit.research.lobster_execution import (
     LobsterExecutionEngine,
