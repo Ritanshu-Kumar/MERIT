@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-DATA = Path("research/m9_fill_hazard_markouts_2019-07-30.csv")
+DATA = Path("research/m9_fill_hazard_markouts_2019-07-30_timestamped.csv")
 OUT = Path("research/m9_economic_units_audit.txt")
 
 HORIZONS = {
@@ -26,7 +26,12 @@ REQUIRED = [
     "fill_fraction",
     "resolution_mid",
     "outcome",
+    "fill_timestamp_ns",
     *HORIZONS.values(),
+    "future_mid_10ms_timestamp_ns",
+    "future_mid_100ms_timestamp_ns",
+    "future_mid_500ms_timestamp_ns",
+    "future_mid_1s_timestamp_ns",
 ]
 
 
@@ -73,7 +78,12 @@ def main() -> None:
         "filled_qty",
         "fill_fraction",
         "resolution_mid",
+        "fill_timestamp_ns",
         *HORIZONS.values(),
+        "future_mid_10ms_timestamp_ns",
+        "future_mid_100ms_timestamp_ns",
+        "future_mid_500ms_timestamp_ns",
+        "future_mid_1s_timestamp_ns",
     ]
 
     for column in numeric_columns:
@@ -103,6 +113,45 @@ def main() -> None:
         "fill_fraction",
     ]:
         lines.append(f"{column}: {describe(df[column])}")
+
+    lines.extend(["", "1a) Markout timestamp integrity and event-time overshoot"])
+    horizon_ns = {
+        "10ms": 10_000_000,
+        "100ms": 100_000_000,
+        "500ms": 500_000_000,
+        "1s": 1_000_000_000,
+    }
+    fill_ts = df["fill_timestamp_ns"]
+    for horizon, offset_ns in horizon_ns.items():
+        price_col = HORIZONS[horizon]
+        ts_col = f"future_mid_{horizon}_timestamp_ns"
+        has_price = df[price_col].notna()
+        has_ts = df[ts_col].notna()
+        mismatches = int(has_price.ne(has_ts).sum())
+        orphan_ts = int((has_ts & fill_ts.isna()).sum())
+        before = has_ts & fill_ts.notna() & ((df[ts_col] - fill_ts) < offset_ns)
+        before_count = int(before.sum())
+        valid = has_ts & fill_ts.notna()
+        overshoot_ms = (
+            df.loc[valid, ts_col] - fill_ts.loc[valid] - offset_ns
+        ) / 1_000_000
+        if mismatches or orphan_ts or before_count:
+            raise ValueError(
+                f"{horizon} timestamp audit failed: mismatches={mismatches}, "
+                f"timestamps_without_fill={orphan_ts}, before_horizon={before_count}"
+            )
+        if len(overshoot_ms):
+            lines.append(
+                f"{horizon}: mismatches=0; timestamps_without_fill=0; before_horizon=0; "
+                f"overshoot_ms p50={overshoot_ms.quantile(0.50):.6f}, "
+                f"p95={overshoot_ms.quantile(0.95):.6f}, max={overshoot_ms.max():.6f}; "
+                f"valid timestamps={len(overshoot_ms):,}"
+            )
+        else:
+            lines.append(
+                f"{horizon}: mismatches=0; timestamps_without_fill=0; "
+                f"before_horizon=0; no observed markouts"
+            )
 
     valid = (
         df["quote_price"].gt(0)
@@ -174,29 +223,29 @@ def main() -> None:
 
     lines.extend([
         "",
-        "4) Independent central-scenario P&L",
-        "Full fills use 100ms midpoint; partial fills use resolution_mid.",
+        "4) Independent central-scenario P&L — full-fill primary and partial sensitivity separated",
+        "Full fills use the 100ms midpoint. Partial fills use resolution_mid only as a separate sensitivity.",
     ])
 
-    df["evaluated_qty"] = df["filled_qty"].clip(lower=0)
+    df["evaluated_qty"] = pd.to_numeric(
+        df["filled_qty"], errors="coerce"
+    ).fillna(0).clip(lower=0)
 
     full_fill = df["outcome"].eq("FILL")
     has_fill = df["evaluated_qty"].gt(0)
+    partial_fill = (
+        has_fill & ~full_fill
+        & df["evaluated_qty"].lt(df["quote_qty"])
+    )
 
     df["audit_mark_mid"] = np.nan
-
     df.loc[full_fill, "audit_mark_mid"] = df.loc[
         full_fill, HORIZONS["100ms"]
     ]
 
-    partial_fill = has_fill & ~full_fill
-
-    df.loc[partial_fill, "audit_mark_mid"] = df.loc[
-        partial_fill, "resolution_mid"
-    ]
-
     valued = (
-        has_fill
+        full_fill
+        & has_fill
         & df["audit_mark_mid"].notna()
         & df["quote_price"].gt(0)
         & df["quote_side"].isin(["BUY", "SELL"])
@@ -216,30 +265,64 @@ def main() -> None:
 
     df["audit_fee_05bps"] = np.where(
         valued,
-        df["quote_price"]
-        * df["evaluated_qty"]
-        * 0.5
-        / 10_000,
+        df["quote_price"] * df["evaluated_qty"] * 0.5 / 10_000,
         0.0,
     )
 
-    df["audit_net"] = (
-        df["audit_gross"] - df["audit_fee_05bps"]
+    df["audit_net"] = df["audit_gross"] - df["audit_fee_05bps"]
+
+    df["partial_audit_mark_mid"] = np.where(
+        partial_fill, df["resolution_mid"], np.nan
+    )
+
+    partial_valued = (
+        partial_fill
+        & df["partial_audit_mark_mid"].notna()
+        & df["quote_price"].gt(0)
+        & df["quote_side"].isin(["BUY", "SELL"])
+    )
+
+    df["partial_audit_signed_move"] = np.where(
+        df["quote_side"].eq("BUY"),
+        df["partial_audit_mark_mid"] - df["quote_price"],
+        df["quote_price"] - df["partial_audit_mark_mid"],
+    )
+
+    df["partial_audit_gross"] = np.where(
+        partial_valued,
+        df["partial_audit_signed_move"] * df["evaluated_qty"],
+        0.0,
+    )
+
+    df["partial_audit_fee_05bps"] = np.where(
+        partial_valued,
+        df["quote_price"] * df["evaluated_qty"] * 0.5 / 10_000,
+        0.0,
+    )
+
+    df["partial_audit_net"] = (
+        df["partial_audit_gross"] - df["partial_audit_fee_05bps"]
     )
 
     lines.extend([
-        f"Rows with positive evaluated quantity: {int(has_fill.sum()):,}",
-        "Filled rows missing valid valuation: "
-        f"{int((has_fill & ~valued).sum()):,}",
-        f"Evaluated shares: {df.loc[valued, 'evaluated_qty'].sum():,.2f}",
-        f"Gross P&L: ${df.loc[valued, 'audit_gross'].sum():,.6f}",
-        f"Fees at 0.5 bps: ${df.loc[valued, 'audit_fee_05bps'].sum():,.6f}",
-        f"Net P&L: ${df.loc[valued, 'audit_net'].sum():,.6f}",
-        "Mean signed movement USD/share: "
+        f"Rows with any positive filled quantity: {int(has_fill.sum()):,}",
+        f"Full-fill candidates: {int((full_fill & has_fill).sum()):,}",
+        f"Partial-fill candidates: {int(partial_fill.sum()):,}",
+        f"Full fills missing valid primary valuation: {int((full_fill & has_fill & ~valued).sum()):,}",
+        f"Partial fills missing sensitivity valuation: {int((partial_fill & ~partial_valued).sum()):,}",
+        f"Primary full-fill shares: {df.loc[valued, 'evaluated_qty'].sum():,.2f}",
+        f"Primary full-fill gross P&L: ${df.loc[valued, 'audit_gross'].sum():,.6f}",
+        f"Primary full-fill fees at 0.5 bps: ${df.loc[valued, 'audit_fee_05bps'].sum():,.6f}",
+        f"Primary full-fill net P&L: ${df.loc[valued, 'audit_net'].sum():,.6f}",
+        f"Partial sensitivity shares: {df.loc[partial_valued, 'evaluated_qty'].sum():,.2f}",
+        f"Partial sensitivity gross P&L: ${df.loc[partial_valued, 'partial_audit_gross'].sum():,.6f}",
+        f"Partial sensitivity fees at 0.5 bps: ${df.loc[partial_valued, 'partial_audit_fee_05bps'].sum():,.6f}",
+        f"Partial sensitivity net P&L: ${df.loc[partial_valued, 'partial_audit_net'].sum():,.6f}",
+        "Mean signed movement USD/share (full fills): "
         f"{df.loc[valued, 'audit_signed_move'].mean():.8f}",
-        "Median signed movement USD/share: "
+        "Median signed movement USD/share (full fills): "
         f"{df.loc[valued, 'audit_signed_move'].median():.8f}",
-        "99th percentile absolute movement USD/share: "
+        "99th percentile absolute movement USD/share (full fills): "
         f"{df.loc[valued, 'audit_signed_move'].abs().quantile(0.99):.8f}",
     ])
 

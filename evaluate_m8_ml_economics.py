@@ -10,7 +10,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-DATA = Path("research/m9_fill_hazard_markouts_2019-07-30.csv")
+DATA = Path("research/m9_fill_hazard_markouts_2019-07-30_timestamped.csv")
 OUT = Path("research/m9_economic_decision_test.csv")
 REPORT = Path("research/m9_economic_decision_test.txt")
 
@@ -79,34 +79,109 @@ def parse_boolish(series: pd.Series) -> pd.Series:
     })
 
 
-def add_candidate_pnl(df: pd.DataFrame, horizon: str, fee_bps: float,
-                      qty_haircut: float) -> pd.DataFrame:
-    """Candidate-level mark-to-market proxy, not portfolio P&L."""
+def validate_markout_timestamps(df: pd.DataFrame) -> None:
+    """Fail closed if markout prices and event timestamps are inconsistent."""
+    horizons_ns = {
+        "10ms": 10_000_000,
+        "100ms": 100_000_000,
+        "500ms": 500_000_000,
+        "1s": 1_000_000_000,
+    }
+    for column in ["fill_timestamp_ns"] + [
+        f"future_mid_{h}_timestamp_ns" for h in horizons_ns
+    ]:
+        if column not in df.columns:
+            raise ValueError(f"Missing timestamp column: {column}")
+
+    fill_ts = pd.to_numeric(df["fill_timestamp_ns"], errors="coerce")
+    for horizon, offset_ns in horizons_ns.items():
+        price_col = f"future_mid_{horizon}"
+        ts_col = f"future_mid_{horizon}_timestamp_ns"
+        prices = pd.to_numeric(df[price_col], errors="coerce")
+        mark_ts = pd.to_numeric(df[ts_col], errors="coerce")
+
+        mismatch = prices.notna().ne(mark_ts.notna())
+        if mismatch.any():
+            raise ValueError(
+                f"{horizon}: {int(mismatch.sum())} midpoint/timestamp mismatches"
+            )
+
+        orphan = mark_ts.notna() & fill_ts.isna()
+        if orphan.any():
+            raise ValueError(
+                f"{horizon}: {int(orphan.sum())} markout timestamps lack fill time"
+            )
+
+        before_horizon = (
+            mark_ts.notna()
+            & fill_ts.notna()
+            & ((mark_ts - fill_ts) < offset_ns)
+        )
+        if before_horizon.any():
+            raise ValueError(
+                f"{horizon}: {int(before_horizon.sum())} observations precede target horizon"
+            )
+
+def add_candidate_pnl(
+    df: pd.DataFrame,
+    horizon: str,
+    fee_bps: float,
+    qty_haircut: float,
+) -> pd.DataFrame:
+    """Candidate-level mark-to-market proxy; primary P&L uses full fills only.
+
+    Partial-fill contributions are separately reported as a sensitivity
+    using resolution_mid, because exact partial-fill timestamps are unavailable.
+    Neither estimate is realized portfolio P&L.
+    """
     x = df.copy()
     x["quote_price"] = pd.to_numeric(x["quote_price"], errors="coerce")
-    x["filled_qty"] = pd.to_numeric(x["filled_qty"], errors="coerce").fillna(0)
-    x["resolution_mid"] = pd.to_numeric(x["resolution_mid"], errors="coerce")
+    x["quote_qty"] = pd.to_numeric(x["quote_qty"], errors="coerce")
+    x["filled_qty"] = pd.to_numeric(
+        x["filled_qty"], errors="coerce"
+    ).fillna(0)
+    x["resolution_mid"] = pd.to_numeric(
+        x["resolution_mid"], errors="coerce"
+    )
+
     future_col = HORIZON_COLUMNS[horizon]
     x[future_col] = pd.to_numeric(x[future_col], errors="coerce")
 
-    x["evaluated_qty"] = x["filled_qty"] * qty_haircut
     is_full_fill = x["outcome"].eq("FILL")
-    has_fill = x["evaluated_qty"].gt(0)
+    x["has_any_fill"] = x["filled_qty"].gt(0)
 
-    # Fully filled candidates use the chosen post-fill markout horizon.
-    # Partial fills in ADVERSE/TIMEOUT use resolution_mid because exact
-    # partial-fill timestamps are not recorded in this dataset.
+    x["primary_full_fill_candidate"] = (
+        is_full_fill & x["has_any_fill"]
+    )
+
+    x["partial_filled_candidate"] = (
+        x["has_any_fill"]
+        & ~is_full_fill
+        & x["filled_qty"].lt(x["quote_qty"])
+    )
+
+    # Primary economic comparison: complete fills only.
+    x["filled_qty_haircut"] = x["filled_qty"] * qty_haircut
+    x["evaluated_qty"] = np.where(
+        x["primary_full_fill_candidate"],
+        x["filled_qty_haircut"],
+        0.0,
+    )
+
     x["mark_mid"] = np.nan
-    x.loc[is_full_fill, "mark_mid"] = x.loc[is_full_fill, future_col]
-    partial = has_fill & ~is_full_fill
-    x.loc[partial, "mark_mid"] = x.loc[partial, "resolution_mid"]
+    x.loc[
+        x["primary_full_fill_candidate"], "mark_mid"
+    ] = x.loc[
+        x["primary_full_fill_candidate"], future_col
+    ]
 
-    unvalued = has_fill & x["mark_mid"].isna()
-    if unvalued.any():
-        counts = x.loc[unvalued, "outcome"].value_counts().to_dict()
+    unvalued_full = (
+        x["primary_full_fill_candidate"] & x["mark_mid"].isna()
+    )
+    if unvalued_full.any():
         raise ValueError(
-            f"{int(unvalued.sum())} filled/partially-filled candidates lack "
-            f"a mark price for horizon={horizon}; outcomes={counts}. "
+            f"{int(unvalued_full.sum())} full-fill candidates lack "
+            f"a mark price for horizon={horizon}. "
             "Do not silently value them as zero."
         )
 
@@ -116,50 +191,151 @@ def add_candidate_pnl(df: pd.DataFrame, horizon: str, fee_bps: float,
         x["mark_mid"] - x["quote_price"],
         x["quote_price"] - x["mark_mid"],
     )
+
     x["gross_pnl"] = np.where(
-        has_fill, signed_move * x["evaluated_qty"], 0.0
-    )
-    x["fees"] = np.where(
-        has_fill,
-        x["quote_price"] * x["evaluated_qty"] * fee_bps / 10_000.0,
+        x["primary_full_fill_candidate"],
+        signed_move * x["evaluated_qty"],
         0.0,
     )
-    x["net_mtm_pnl"] = x["gross_pnl"] - x["fees"]
-    x["partial_filled_candidate"] = (
-        has_fill & ~is_full_fill & x["filled_qty"].lt(x["quote_qty"])
+
+    x["fees"] = np.where(
+        x["primary_full_fill_candidate"],
+        x["quote_price"]
+        * x["evaluated_qty"]
+        * fee_bps
+        / 10_000.0,
+        0.0,
     )
+
+    x["net_mtm_pnl"] = x["gross_pnl"] - x["fees"]
+
+    # Secondary partial-fill sensitivity using resolution_mid.
+    partial = x["partial_filled_candidate"]
+
+    x["partial_sensitivity_qty"] = np.where(
+        partial,
+        x["filled_qty_haircut"],
+        0.0,
+    )
+
+    x["partial_sensitivity_mark_mid"] = np.where(
+        partial,
+        x["resolution_mid"],
+        np.nan,
+    )
+
+    x["partial_sensitivity_valued"] = (
+        partial
+        & x["partial_sensitivity_mark_mid"].notna()
+        & x["quote_price"].notna()
+        & x["quote_side"].isin(["BUY", "SELL"])
+    )
+
+    partial_move = np.where(
+        buy,
+        x["partial_sensitivity_mark_mid"] - x["quote_price"],
+        x["quote_price"] - x["partial_sensitivity_mark_mid"],
+    )
+
+    x["partial_sensitivity_gross_pnl"] = np.where(
+        x["partial_sensitivity_valued"],
+        partial_move * x["partial_sensitivity_qty"],
+        0.0,
+    )
+
+    x["partial_sensitivity_fees"] = np.where(
+        x["partial_sensitivity_valued"],
+        x["quote_price"]
+        * x["partial_sensitivity_qty"]
+        * fee_bps
+        / 10_000.0,
+        0.0,
+    )
+
+    x["partial_sensitivity_net_pnl"] = (
+        x["partial_sensitivity_gross_pnl"]
+        - x["partial_sensitivity_fees"]
+    )
+
     x["time_block"] = (
         pd.to_numeric(x["timestamp_ns"], errors="raise").astype("int64")
         // BLOCK_NS
     )
+
     return x
 
 
-def summarize_policy(df: pd.DataFrame, policy: str, scenario: str) -> dict:
+def summarize_policy(
+    df: pd.DataFrame, policy: str, scenario: str
+) -> dict:
     selected = df[df[policy]].copy()
-    filled = selected[selected["evaluated_qty"] > 0]
+    full_filled = selected[selected["primary_full_fill_candidate"]]
+    partial = selected[selected["partial_filled_candidate"]]
+
     n = len(selected)
+    any_fill_count = int(selected["has_any_fill"].sum())
+    partial_valued_count = int(
+        partial["partial_sensitivity_valued"].sum()
+    )
+
     return {
         "scenario": scenario,
         "policy": policy,
         "selected_candidates": n,
-        "candidates_with_any_fill": int((selected["evaluated_qty"] > 0).sum()),
-        "partial_fill_candidates": int(selected["partial_filled_candidate"].sum()),
-        "fill_candidate_rate_pct": (
-            100 * (selected["evaluated_qty"] > 0).mean() if n else np.nan
+        "candidates_with_any_fill": any_fill_count,
+        "full_fill_candidates": int(
+            selected["primary_full_fill_candidate"].sum()
         ),
-        "evaluated_shares": float(selected["evaluated_qty"].sum()),
-        "gross_mark_to_market_pnl_usd": float(selected["gross_pnl"].sum()),
+        "partial_fill_candidates": int(
+            selected["partial_filled_candidate"].sum()
+        ),
+        "partial_sensitivity_unvalued_candidates": int(
+            (
+                selected["partial_filled_candidate"]
+                & ~selected["partial_sensitivity_valued"]
+            ).sum()
+        ),
+        "fill_candidate_rate_pct": (
+            100 * any_fill_count / n if n else np.nan
+        ),
+        "full_fill_candidate_rate_pct": (
+            100 * float(
+                selected["primary_full_fill_candidate"].mean()
+            ) if n else np.nan
+        ),
+        "evaluated_shares_full_fills_only": float(
+            selected["evaluated_qty"].sum()
+        ),
+        "gross_mark_to_market_pnl_usd": float(
+            selected["gross_pnl"].sum()
+        ),
         "estimated_fees_usd": float(selected["fees"].sum()),
-        "net_mark_to_market_pnl_usd": float(selected["net_mtm_pnl"].sum()),
+        "net_mark_to_market_pnl_usd": float(
+            selected["net_mtm_pnl"].sum()
+        ),
         "net_pnl_per_selected_candidate_usd": (
             float(selected["net_mtm_pnl"].mean()) if n else np.nan
         ),
         "net_pnl_per_100_selected_candidates_usd": (
-            float(100 * selected["net_mtm_pnl"].mean()) if n else np.nan
+            float(100 * selected["net_mtm_pnl"].mean())
+            if n else np.nan
         ),
-        "net_pnl_per_filled_candidate_usd": (
-            float(filled["net_mtm_pnl"].mean()) if len(filled) else np.nan
+        "net_pnl_per_full_fill_candidate_usd": (
+            float(full_filled["net_mtm_pnl"].mean())
+            if len(full_filled) else np.nan
+        ),
+        "partial_sensitivity_valued_candidates": partial_valued_count,
+        "partial_sensitivity_net_pnl_usd": float(
+            selected["partial_sensitivity_net_pnl"].sum()
+        ),
+        "partial_sensitivity_net_pnl_per_valued_partial_usd": (
+            float(
+                selected.loc[
+                    selected["partial_filled_candidate"]
+                    & selected["partial_sensitivity_valued"],
+                    "partial_sensitivity_net_pnl",
+                ].mean()
+            ) if partial_valued_count else np.nan
         ),
     }
 
@@ -213,12 +389,16 @@ def main() -> None:
     df = pd.read_csv(DATA)
     required = {
         "timestamp_ns", "symbol", "quote_side", "quote_price", "quote_qty",
-        "filled_qty", "resolution_mid", "outcome", *FEATURES,
+        "filled_qty", "resolution_mid", "outcome", "fill_timestamp_ns", *FEATURES,
         *HORIZON_COLUMNS.values(),
+        "future_mid_10ms_timestamp_ns", "future_mid_100ms_timestamp_ns",
+        "future_mid_500ms_timestamp_ns", "future_mid_1s_timestamp_ns",
     }
     missing = sorted(required - set(df.columns))
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
+
+    validate_markout_timestamps(df)
 
     df["quote_side"] = df["quote_side"].astype(str).str.upper()
     df["outcome"] = df["outcome"].astype(str).str.upper()
@@ -328,7 +508,8 @@ def main() -> None:
         "- Conservative: 1s markout for full fills, 50% quantity haircut, 1.0 bps fee.",
         "- Central: 100ms markout for full fills, recorded quantity, 0.5 bps fee.",
         "- Optimistic: 10ms markout for full fills, recorded quantity, zero fees.",
-        "- Partial ADVERSE/TIMEOUT fills use resolution_mid; their exact fill timestamps are unavailable.",
+        "- Primary economics use fully filled candidates only; partial-fill contributions are excluded from primary P&L.",
+        "- Partial-fill resolution_mid estimates are reported separately as sensitivity only; exact partial-fill timestamps are unavailable.",
         "",
         "Candidate-level economic proxy (USD):",
         summary_df.to_string(index=False, float_format=lambda x: f"{x:.6f}"),
@@ -338,7 +519,8 @@ def main() -> None:
         "",
         "Interpretation limits:",
         "- These are overlapping hypothetical quote candidates, not an executable portfolio.",
-        "- P&L is mark-to-market from passive quote price to a later midpoint, less estimated entry fees.",
+        "- Primary P&L is mark-to-market from passive quote price to a later midpoint for full fills only, less estimated entry fees.",
+        "- Per-selected-candidate metrics retain every selected candidate in the denominator; partial fills do not contribute to primary P&L.",
         "- No inventory limits, overlapping live-order constraints, exit costs, or realized liquidation are modeled.",
         "- ML train-threshold policy is prospective relative to this split; the symbol×side-matched ML policy uses test scores retrospectively and is diagnostic only.",
         "- Single trading day: exploratory only. A CI spanning zero is inconclusive, not proof of equivalence.",

@@ -61,6 +61,10 @@ OUTPUT_COLUMNS = [
     "future_mid_100ms",
     "future_mid_500ms",
     "future_mid_1s",
+    "future_mid_10ms_timestamp_ns",
+    "future_mid_100ms_timestamp_ns",
+    "future_mid_500ms_timestamp_ns",
+    "future_mid_1s_timestamp_ns",
 ]
 
 
@@ -108,11 +112,17 @@ class Candidate:
     required_execution_volume: int = 0
     fill_timestamp_ns: int | None = None
     future_mids: dict[str, float | None] | None = None
+    future_mid_timestamps: dict[str, int | None] | None = None
     markout_resolved: dict[str, bool] | None = None
 
     def __post_init__(self) -> None:
         if self.future_mids is None:
             self.future_mids = {
+                horizon: None
+                for horizon in MARKOUT_HORIZONS_NS
+            }
+        if self.future_mid_timestamps is None:
+            self.future_mid_timestamps = {
                 horizon: None
                 for horizon in MARKOUT_HORIZONS_NS
             }
@@ -831,6 +841,10 @@ class HazardEngine:
                     and age >= horizon_ns
                 ):
                     candidate.future_mids[horizon_name] = current_mid
+                    # Record the actual event timestamp of the first eligible
+                    # midpoint. Event-time sampling can overshoot the target
+                    # horizon, so this is not necessarily fill_time + horizon.
+                    candidate.future_mid_timestamps[horizon_name] = timestamp_ns
                     candidate.markout_resolved[horizon_name] = True
 
             if all(candidate.markout_resolved.values()):
@@ -964,6 +978,10 @@ def candidate_to_row(
         "future_mid_100ms": candidate.future_mids["100ms"],
         "future_mid_500ms": candidate.future_mids["500ms"],
         "future_mid_1s": candidate.future_mids["1s"],
+        "future_mid_10ms_timestamp_ns": candidate.future_mid_timestamps["10ms"],
+        "future_mid_100ms_timestamp_ns": candidate.future_mid_timestamps["100ms"],
+        "future_mid_500ms_timestamp_ns": candidate.future_mid_timestamps["500ms"],
+        "future_mid_1s_timestamp_ns": candidate.future_mid_timestamps["1s"],
     }
 
 
