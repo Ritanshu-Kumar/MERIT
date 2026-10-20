@@ -1,5 +1,7 @@
+
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from datetime import timedelta
 
 from merit.book.l2_book import L2OrderBook
 from merit.data.normalized import (
@@ -27,9 +29,21 @@ def replay_queue_aware_fills(
     events: Iterable[NormalizedMarketEvent],
     queue_model: QueueModel,
     order_quantity: int,
+    horizon_seconds: float | None = None,
 ) -> Iterator[HistoricalFill]:
     if order_quantity <= 0:
         raise ValueError("order_quantity must be positive")
+
+    if horizon_seconds is not None and horizon_seconds <= 0:
+        raise ValueError(
+            "horizon_seconds must be positive when provided"
+        )
+
+    horizon = (
+        timedelta(seconds=horizon_seconds)
+        if horizon_seconds is not None
+        else None
+    )
 
     opportunity_iter = iter(opportunities)
     pending: list[QuoteOpportunity] = []
@@ -42,6 +56,16 @@ def replay_queue_aware_fills(
         if book is None:
             book = L2OrderBook(event.symbol)
 
+        # Expire opportunities only after their deadline.
+        # An execution exactly at the deadline is still eligible.
+        if horizon is not None:
+            active = [
+                candidate
+                for candidate in active
+                if event.timestamp
+                <= candidate.opportunity.timestamp + horizon
+            ]
+
         while (
             next_opportunity is not None
             and next_opportunity.timestamp < event.timestamp
@@ -51,7 +75,16 @@ def replay_queue_aware_fills(
 
         if pending:
             for opportunity in pending:
+                # Never activate an opportunity after its deadline.
+                if (
+                    horizon is not None
+                    and event.timestamp
+                    > opportunity.timestamp + horizon
+                ):
+                    continue
+
                 visible_quantity = _visible_quantity(opportunity)
+
                 active.append(
                     ActiveOpportunity(
                         opportunity=opportunity,
@@ -59,6 +92,7 @@ def replay_queue_aware_fills(
                         remaining_quantity=order_quantity,
                     )
                 )
+
             pending.clear()
 
         if isinstance(event, OrderExecuteEvent):

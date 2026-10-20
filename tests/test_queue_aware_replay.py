@@ -212,3 +212,96 @@ def test_invalid_order_quantity() -> None:
                 order_quantity=0,
             )
         )
+
+
+def test_execution_at_horizon_boundary_can_fill() -> None:
+    opportunity = make_opportunity(bid_size=0)
+    deadline = BASE + timedelta(seconds=1)
+
+    events = (
+        make_add(1, BASE),
+        make_execute(25, deadline),
+    )
+
+    fills = list(
+        replay_queue_aware_fills(
+            opportunities=(opportunity,),
+            events=events,
+            queue_model=QueueModel(ahead_fraction=0.0),
+            order_quantity=100,
+            horizon_seconds=1.0,
+        )
+    )
+
+    assert len(fills) == 1
+    assert fills[0].timestamp == deadline
+    assert fills[0].quantity == 25
+
+
+def test_execution_after_horizon_does_not_fill() -> None:
+    opportunity = make_opportunity(bid_size=0)
+    after_deadline = BASE + timedelta(
+        seconds=1,
+        microseconds=1,
+    )
+
+    events = (
+        make_add(1, BASE),
+        make_execute(100, after_deadline),
+    )
+
+    fills = list(
+        replay_queue_aware_fills(
+            opportunities=(opportunity,),
+            events=events,
+            queue_model=QueueModel(ahead_fraction=0.0),
+            order_quantity=100,
+            horizon_seconds=1.0,
+        )
+    )
+
+    assert fills == []
+
+
+def test_partial_fill_does_not_continue_after_horizon() -> None:
+    opportunity = make_opportunity(bid_size=0)
+
+    events = (
+        make_add(1, BASE),
+        make_execute(
+            25,
+            BASE + timedelta(milliseconds=500),
+        ),
+        make_execute(
+            75,
+            BASE + timedelta(seconds=1, microseconds=1),
+        ),
+    )
+
+    fills = list(
+        replay_queue_aware_fills(
+            opportunities=(opportunity,),
+            events=events,
+            queue_model=QueueModel(ahead_fraction=0.0),
+            order_quantity=100,
+            horizon_seconds=1.0,
+        )
+    )
+
+    assert [fill.quantity for fill in fills] == [25]
+
+
+def test_non_positive_horizon_is_rejected() -> None:
+    with pytest.raises(
+        ValueError,
+        match="horizon_seconds must be positive",
+    ):
+        list(
+            replay_queue_aware_fills(
+                opportunities=(),
+                events=(),
+                queue_model=QueueModel(),
+                order_quantity=100,
+                horizon_seconds=0,
+            )
+        )
