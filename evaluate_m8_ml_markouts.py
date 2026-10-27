@@ -38,7 +38,22 @@ HORIZONS = {
     "100ms": "future_mid_100ms",
     "500ms": "future_mid_500ms",
     "1s": "future_mid_1s",
+    "5s": "future_mid_5s",
 }
+
+
+def available_horizons(columns):
+    available = {
+        label: column
+        for label, column in HORIZONS.items()
+        if column in columns
+    }
+    if not available:
+        raise ValueError(
+            "No supported future-mid horizon columns found in dataset. "
+            f"Expected one of: {sorted(HORIZONS.values())}"
+        )
+    return available
 
 
 def chronological_split(df):
@@ -199,6 +214,8 @@ def main():
 
     df = pd.read_csv(DATA)
 
+    horizons = available_horizons(df.columns)
+
     required = {
         "timestamp_ns",
         "symbol",
@@ -207,7 +224,7 @@ def main():
         "outcome",
         "fill_timestamp_ns",
         *FEATURES,
-        *HORIZONS.values(),
+        *horizons.values(),
     }
     missing = sorted(required - set(df.columns))
     if missing:
@@ -291,7 +308,7 @@ def main():
     # First calculate markout diagnostics at each horizon.
     marks_by_policy_horizon = {}
 
-    for horizon, future_column in HORIZONS.items():
+    for horizon, future_column in horizons.items():
         for policy, selected in policies.items():
             marks = make_markouts(selected, future_column)
             marks_by_policy_horizon[(policy, horizon)] = marks
@@ -333,7 +350,7 @@ def main():
     # time-block resampling. Positive difference favors ML.
     diff_rows = []
 
-    for horizon in HORIZONS:
+    for horizon in horizons:
         m8_marks = marks_by_policy_horizon[("Frozen M8", horizon)]
         ml_marks = marks_by_policy_horizon[
             ("ML matched by symbol + side", horizon)
@@ -377,7 +394,7 @@ def main():
             ]
 
             fills = int(group["outcome"].eq("FILL").sum())
-            marks_1s = make_markouts(group, HORIZONS["1s"])
+            marks_1s = make_markouts(group, horizons["1s"])
 
             stratum_rows.append({
                 "symbol": symbol,

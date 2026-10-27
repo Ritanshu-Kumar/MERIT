@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import csv
 import heapq
-from collections import defaultdict, deque
+import os
+import tempfile
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +24,7 @@ TARGET_SYMBOLS = {
 
 QUOTE_QTY = 100
 TIMEOUT_NS = 1_000_000_000
+DEFAULT_SAMPLING_INTERVAL_NS = 1_000_000_000
 TICK_SIZE_UNITS = 100
 
 MARKOUT_HORIZONS_NS = {
@@ -29,9 +32,14 @@ MARKOUT_HORIZONS_NS = {
     "100ms": 100_000_000,
     "500ms": 500_000_000,
     "1s": 1_000_000_000,
+    "5s": 5_000_000_000,
 }
 
 OUTPUT_COLUMNS = [
+    "candidate_id",
+    "event_id",
+    "cluster_id",
+    "cluster_size",
     "timestamp_ns",
     "symbol",
     "stock_locate",
@@ -57,14 +65,18 @@ OUTPUT_COLUMNS = [
     "outcome",
     "fill_before_adverse",
     "fill_timestamp_ns",
+    "fill_resolution_message_index",
+    "fill_resolution_type",
     "future_mid_10ms",
     "future_mid_100ms",
     "future_mid_500ms",
     "future_mid_1s",
+    "future_mid_5s",
     "future_mid_10ms_timestamp_ns",
     "future_mid_100ms_timestamp_ns",
     "future_mid_500ms_timestamp_ns",
     "future_mid_1s_timestamp_ns",
+    "future_mid_5s_timestamp_ns",
 ]
 
 
@@ -102,6 +114,7 @@ class Candidate:
     filled_qty: int
     expiry_ns: int
     adverse_threshold: float
+    source_event_id: int | None = None
 
     level_resets: int = 0
     status: str = "ACTIVE"
@@ -111,6 +124,8 @@ class Candidate:
 
     required_execution_volume: int = 0
     fill_timestamp_ns: int | None = None
+    fill_resolution_message_index: int | None = None
+    fill_resolution_type: str | None = None
     future_mids: dict[str, float | None] | None = None
     future_mid_timestamps: dict[str, int | None] | None = None
     markout_resolved: dict[str, bool] | None = None
@@ -217,11 +232,17 @@ class HazardEngine:
         candidate: Candidate,
         timestamp_ns: int,
         resolution_mid: float | None,
+        fill_resolution_message_index: int | None = None,
+        fill_resolution_type: str = "unknown",
     ) -> None:
         if candidate.status != "ACTIVE":
             return
 
         candidate.filled_qty = candidate.quote_qty
+        candidate.fill_resolution_message_index = (
+            fill_resolution_message_index
+        )
+        candidate.fill_resolution_type = fill_resolution_type
         candidate.status = "FILL"
         candidate.resolved_timestamp_ns = (
             timestamp_ns
@@ -233,6 +254,10 @@ class HazardEngine:
 
         self._remove_active(candidate)
         candidate.fill_timestamp_ns = timestamp_ns
+        if resolution_mid is not None:
+            for horizon_name in MARKOUT_HORIZONS_NS:
+                candidate.future_mids[horizon_name] = resolution_mid
+                candidate.future_mid_timestamps[horizon_name] = timestamp_ns
         self.pending_fill_marks[candidate.stock_locate].append(candidate)
 
     def _partial_fill_at_current_epoch(
@@ -275,6 +300,7 @@ class HazardEngine:
         delta_microprice: float,
         delta_spread: float,
         pre_level_epoch: int,
+        source_event_id: int | None = None,
     ) -> None:
         resting_side = (
             "B"
@@ -355,6 +381,7 @@ class HazardEngine:
                 + TIMEOUT_NS
             ),
             adverse_threshold=adverse_threshold,
+            source_event_id=source_event_id,
             required_execution_volume=(
                 required_execution_volume
             ),
@@ -414,6 +441,7 @@ class HazardEngine:
         shares: int,
         timestamp_ns: int,
         current_mid: float | None,
+        message_index: int | None = None,
     ) -> None:
         key = self.level_key(
             stock_locate,
@@ -456,6 +484,8 @@ class HazardEngine:
                 candidate,
                 timestamp_ns,
                 current_mid,
+                fill_resolution_message_index=message_index,
+                fill_resolution_type="execution",
             )
 
     def handle_level_reset(
@@ -465,6 +495,7 @@ class HazardEngine:
         price: int,
         timestamp_ns: int,
         current_mid: float | None,
+        message_index: int | None = None,
     ) -> None:
         key = self.level_key(
             stock_locate,
@@ -529,6 +560,8 @@ class HazardEngine:
                     candidate,
                     timestamp_ns,
                     current_mid,
+                    fill_resolution_message_index=message_index,
+                    fill_resolution_type="level_reset",
                 )
                 continue
 
@@ -817,9 +850,18 @@ class HazardEngine:
         timestamp_ns: int,
         current_mid: float | None,
     ) -> None:
-        if current_mid is None:
-            return
+        """
+        Resolve post-fill midpoint markouts using as-of semantics.
 
+        For each horizon T = fill time + horizon:
+          - At or before T, update the provisional midpoint.
+          - After T, freeze the last midpoint observed at or before T.
+          - Never use a midpoint from after T for that horizon.
+
+        The caller must process events in exchange-timestamp order.
+        Events sharing the target timestamp may update the provisional mark
+        until the stream advances beyond that timestamp.
+        """
         pending = self.pending_fill_marks[stock_locate]
         remaining: deque[Candidate] = deque()
 
@@ -830,21 +872,17 @@ class HazardEngine:
                 remaining.append(candidate)
                 continue
 
-            age = (
-                timestamp_ns
-                - candidate.fill_timestamp_ns
-            )
-
             for horizon_name, horizon_ns in MARKOUT_HORIZONS_NS.items():
-                if (
-                    not candidate.markout_resolved[horizon_name]
-                    and age >= horizon_ns
-                ):
-                    candidate.future_mids[horizon_name] = current_mid
-                    # Record the actual event timestamp of the first eligible
-                    # midpoint. Event-time sampling can overshoot the target
-                    # horizon, so this is not necessarily fill_time + horizon.
-                    candidate.future_mid_timestamps[horizon_name] = timestamp_ns
+                if candidate.markout_resolved[horizon_name]:
+                    continue
+                target_ns = candidate.fill_timestamp_ns + horizon_ns
+                if timestamp_ns <= target_ns:
+                    if current_mid is not None:
+                        candidate.future_mids[horizon_name] = current_mid
+                        candidate.future_mid_timestamps[horizon_name] = (
+                            timestamp_ns
+                        )
+                else:
                     candidate.markout_resolved[horizon_name] = True
 
             if all(candidate.markout_resolved.values()):
@@ -853,6 +891,33 @@ class HazardEngine:
                 remaining.append(candidate)
 
         self.pending_fill_marks[stock_locate] = remaining
+
+    def finalize_pending_markouts(self, last_timestamp_ns: int) -> None:
+        """
+        Finalize horizons reached by the available feed.
+
+        A horizon beyond the end of the feed remains unresolved and must not
+        be assigned a fabricated future midpoint.
+        """
+        for stock_locate, pending in list(self.pending_fill_marks.items()):
+            remaining: deque[Candidate] = deque()
+            while pending:
+                candidate = pending.popleft()
+                if candidate.fill_timestamp_ns is None:
+                    remaining.append(candidate)
+                    continue
+                for horizon_name, horizon_ns in MARKOUT_HORIZONS_NS.items():
+                    target_ns = candidate.fill_timestamp_ns + horizon_ns
+                    if (
+                        not candidate.markout_resolved[horizon_name]
+                        and last_timestamp_ns >= target_ns
+                    ):
+                        candidate.markout_resolved[horizon_name] = True
+                if all(candidate.markout_resolved.values()):
+                    self.completed.append(candidate)
+                else:
+                    remaining.append(candidate)
+            self.pending_fill_marks[stock_locate] = remaining
 
     def pop_completed(
         self,
@@ -920,6 +985,10 @@ def candidate_to_row(
     )
 
     return {
+        "candidate_id": candidate.candidate_id,
+        "event_id": candidate.source_event_id,
+        "cluster_id": f"{candidate.symbol}:{candidate.timestamp_ns}",
+        "cluster_size": None,
         "timestamp_ns": candidate.timestamp_ns,
         "symbol": candidate.symbol,
         "stock_locate": candidate.stock_locate,
@@ -974,14 +1043,20 @@ def candidate_to_row(
             candidate.status == "FILL"
         ),
         "fill_timestamp_ns": candidate.fill_timestamp_ns,
+        "fill_resolution_message_index": (
+            candidate.fill_resolution_message_index
+        ),
+        "fill_resolution_type": candidate.fill_resolution_type,
         "future_mid_10ms": candidate.future_mids["10ms"],
         "future_mid_100ms": candidate.future_mids["100ms"],
         "future_mid_500ms": candidate.future_mids["500ms"],
         "future_mid_1s": candidate.future_mids["1s"],
+        "future_mid_5s": candidate.future_mids["5s"],
         "future_mid_10ms_timestamp_ns": candidate.future_mid_timestamps["10ms"],
         "future_mid_100ms_timestamp_ns": candidate.future_mid_timestamps["100ms"],
         "future_mid_500ms_timestamp_ns": candidate.future_mid_timestamps["500ms"],
         "future_mid_1s_timestamp_ns": candidate.future_mid_timestamps["1s"],
+        "future_mid_5s_timestamp_ns": candidate.future_mid_timestamps["5s"],
     }
 
 
@@ -999,11 +1074,88 @@ def write_completed(
     return len(completed)
 
 
+def finalize_cluster_metadata(output_path: Path) -> None:
+    """
+    Populate cluster_size using rows actually present in the final CSV.
+
+    Clusters are defined by the existing cluster_id field: symbol plus
+    decision timestamp. A temporary file is written first so the original
+    CSV is not replaced unless the rewrite completes successfully.
+    """
+    counts: Counter[str] = Counter()
+    with output_path.open(
+        "r",
+        newline="",
+        encoding="utf-8",
+    ) as source:
+        reader = csv.DictReader(source)
+        if not reader.fieldnames:
+            raise ValueError("Dataset has no CSV header.")
+        required = {
+            "candidate_id",
+            "event_id",
+            "cluster_id",
+            "cluster_size",
+        }
+        missing = required.difference(reader.fieldnames)
+        if missing:
+            raise ValueError(
+                f"Dataset is missing required columns: {sorted(missing)}"
+            )
+        for row in reader:
+            cluster_id = row["cluster_id"]
+            if not cluster_id:
+                raise ValueError("Dataset contains a missing cluster_id.")
+            counts[cluster_id] += 1
+        fieldnames = reader.fieldnames
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            newline="",
+            encoding="utf-8",
+            dir=output_path.parent,
+            prefix=f".{output_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temp_path = Path(temporary.name)
+            writer = csv.DictWriter(
+                temporary,
+                fieldnames=fieldnames,
+            )
+            writer.writeheader()
+            with output_path.open(
+                "r",
+                newline="",
+                encoding="utf-8",
+            ) as source:
+                reader = csv.DictReader(source)
+                for row in reader:
+                    row["cluster_size"] = str(counts[row["cluster_id"]])
+                    writer.writerow(row)
+        os.replace(temp_path, output_path)
+        temp_path = None
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
 def run(
     input_path: Path,
     output_path: Path,
     max_messages: int | None,
+    sampling_mode: str = "execution",
+    sampling_interval_ns: int = DEFAULT_SAMPLING_INTERVAL_NS,
 ) -> None:
+    if sampling_mode not in {"execution", "time"}:
+        raise ValueError(
+            "sampling_mode must be 'execution' or 'time'"
+        )
+    if sampling_interval_ns <= 0:
+        raise ValueError("sampling_interval_ns must be positive")
+
     locate_to_symbol = (
         m9.discover_stock_locates(
             input_path,
@@ -1042,6 +1194,11 @@ def run(
         int,
         m9.BookState,
     ] = {}
+    previous_sample_state: dict[
+        int,
+        m9.BookState,
+    ] = {}
+    next_sample_ns: dict[int, int] = {}
 
     engine = HazardEngine()
 
@@ -1054,6 +1211,7 @@ def run(
     execution_count = 0
     candidate_count = 0
     completed_count = 0
+    last_timestamp_ns: int | None = None
 
     with output_path.open(
         "w",
@@ -1097,6 +1255,8 @@ def run(
             ]
 
             book = books[stock_locate]
+
+            last_timestamp_ns = timestamp_ns
 
             pre_state = book.snapshot()
 
@@ -1373,6 +1533,7 @@ def run(
                         if post_state is not None
                         else None
                     ),
+                    message_index=message_count,
                 )
 
                 execution_count += 1
@@ -1441,46 +1602,104 @@ def run(
             )
 
             # -------------------------------------------------------
-            # Create NEW candidates using the PRE-event quote.
-            # The triggering execution is therefore excluded.
+            # Create candidates either from execution-triggered
+            # pre-event state or on the scheduled time grid.
             # -------------------------------------------------------
-            if (
-                message_type in {"E", "C"}
-                and pre_state is not None
-                and post_state is not None
-            ):
-                previous = (
-                    previous_execution_state.get(
+            should_sample = False
+            sample_state: m9.BookState | None = None
+            sample_quotes: dict[str, tuple[int, int]] = {}
+            previous: m9.BookState | None = None
+
+            if sampling_mode == "execution":
+                if (
+                    message_type in {"E", "C"}
+                    and pre_state is not None
+                    and post_state is not None
+                ):
+                    should_sample = True
+                    sample_state = pre_state
+                    sample_quotes = pre_quotes
+                    previous = previous_execution_state.get(
                         stock_locate
                     )
+                    previous_execution_state[stock_locate] = pre_state
+            else:
+                book_update = message_type in {
+                    "A",
+                    "F",
+                    "D",
+                    "X",
+                    "E",
+                    "C",
+                    "U",
+                }
+                next_due = next_sample_ns.get(
+                    stock_locate,
+                    timestamp_ns,
                 )
+                if (
+                    book_update
+                    and post_state is not None
+                    and timestamp_ns >= next_due
+                ):
+                    should_sample = True
+                    sample_state = post_state
+                    previous = previous_sample_state.get(
+                        stock_locate
+                    )
+                    elapsed_intervals = (
+                        (timestamp_ns - next_due)
+                        // sampling_interval_ns
+                    ) + 1
+                    next_sample_ns[stock_locate] = (
+                        next_due
+                        + elapsed_intervals * sampling_interval_ns
+                    )
 
+                    best_bid = book.best_bid()
+                    best_ask = book.best_ask()
+                    if best_bid is not None:
+                        key = engine.level_key(
+                            stock_locate,
+                            "B",
+                            best_bid,
+                        )
+                        sample_quotes["BUY"] = (
+                            best_bid,
+                            engine.level(key).epoch,
+                        )
+                    if best_ask is not None:
+                        key = engine.level_key(
+                            stock_locate,
+                            "S",
+                            best_ask,
+                        )
+                        sample_quotes["SELL"] = (
+                            best_ask,
+                            engine.level(key).epoch,
+                        )
+
+            if should_sample and sample_state is not None:
                 if previous is None:
                     delta_imbalance = 0.0
                     delta_microprice = 0.0
                     delta_spread = 0.0
                 else:
                     delta_imbalance = (
-                        pre_state.imbalance
+                        sample_state.imbalance
                         - previous.imbalance
                     )
-
                     delta_microprice = (
-                        pre_state.microprice
+                        sample_state.microprice
                         - previous.microprice
                     )
-
                     delta_spread = (
-                        pre_state.spread
+                        sample_state.spread
                         - previous.spread
                     )
 
-                if "BUY" in pre_quotes:
-                    (
-                        bid_price,
-                        bid_epoch,
-                    ) = pre_quotes["BUY"]
-
+                if "BUY" in sample_quotes:
+                    bid_price, bid_epoch = sample_quotes["BUY"]
                     engine.create_candidate(
                         timestamp_ns=timestamp_ns,
                         symbol=symbol,
@@ -1488,25 +1707,17 @@ def run(
                         quote_side="BUY",
                         quote_price=bid_price,
                         quote_qty=QUOTE_QTY,
-                        state=pre_state,
-                        delta_imbalance=(
-                            delta_imbalance
-                        ),
-                        delta_microprice=(
-                            delta_microprice
-                        ),
+                        state=sample_state,
+                        delta_imbalance=delta_imbalance,
+                        delta_microprice=delta_microprice,
                         delta_spread=delta_spread,
                         pre_level_epoch=bid_epoch,
+                        source_event_id=message_count,
                     )
-
                     candidate_count += 1
 
-                if "SELL" in pre_quotes:
-                    (
-                        ask_price,
-                        ask_epoch,
-                    ) = pre_quotes["SELL"]
-
+                if "SELL" in sample_quotes:
+                    ask_price, ask_epoch = sample_quotes["SELL"]
                     engine.create_candidate(
                         timestamp_ns=timestamp_ns,
                         symbol=symbol,
@@ -1514,22 +1725,17 @@ def run(
                         quote_side="SELL",
                         quote_price=ask_price,
                         quote_qty=QUOTE_QTY,
-                        state=pre_state,
-                        delta_imbalance=(
-                            delta_imbalance
-                        ),
-                        delta_microprice=(
-                            delta_microprice
-                        ),
+                        state=sample_state,
+                        delta_imbalance=delta_imbalance,
+                        delta_microprice=delta_microprice,
                         delta_spread=delta_spread,
                         pre_level_epoch=ask_epoch,
+                        source_event_id=message_count,
                     )
-
                     candidate_count += 1
 
-                previous_execution_state[
-                    stock_locate
-                ] = pre_state
+                if sampling_mode == "time":
+                    previous_sample_state[stock_locate] = sample_state
 
             if (
                 message_count % 5_000_000
@@ -1547,10 +1753,11 @@ def run(
                     f"active={active_count:,}"
                 )
 
-        # Remaining candidates have not reached their exact
-        # one-second horizon because the stream ended.
-        # They are deliberately excluded rather than fabricating
-        # a future state after the sample boundary.
+        if last_timestamp_ns is not None:
+            engine.finalize_pending_markouts(last_timestamp_ns)
+            completed_count += write_completed(writer, engine)
+
+    finalize_cluster_metadata(output_path)
 
     print()
     print("Completed")
@@ -1603,13 +1810,35 @@ def main() -> None:
         type=int,
         default=None,
     )
+    parser.add_argument(
+        "--sampling-mode",
+        choices=("execution", "time"),
+        default="execution",
+        help=(
+            "Candidate sampling mode: execution-triggered "
+            "or scheduled time sampling."
+        ),
+    )
+    parser.add_argument(
+        "--sampling-interval-ms",
+        type=int,
+        default=1000,
+        help="Scheduled sampling interval for time mode, in milliseconds.",
+    )
 
     args = parser.parse_args()
+
+    if args.sampling_interval_ms <= 0:
+        parser.error("--sampling-interval-ms must be positive")
 
     run(
         input_path=args.input,
         output_path=args.output,
         max_messages=args.max_messages,
+        sampling_mode=args.sampling_mode,
+        sampling_interval_ns=(
+            args.sampling_interval_ms * 1_000_000
+        ),
     )
 
 
