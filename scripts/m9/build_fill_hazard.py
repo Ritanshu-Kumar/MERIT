@@ -54,6 +54,7 @@ OUTPUT_COLUMNS = [
     "delta_microprice",
     "delta_spread",
     "queue_ahead_initial",
+    "queue_ahead_at_activation",
     "filled_qty",
     "fill_fraction",
     "time_to_resolution_ns",
@@ -115,6 +116,7 @@ class Candidate:
     expiry_ns: int
     adverse_threshold: float
     source_event_id: int | None = None
+    queue_ahead_at_activation: int | None = None
 
     level_resets: int = 0
     status: str = "ACTIVE"
@@ -301,6 +303,7 @@ class HazardEngine:
         delta_spread: float,
         pre_level_epoch: int,
         source_event_id: int | None = None,
+        activation_queue_ahead: int | None = None,
     ) -> None:
         resting_side = (
             "B"
@@ -344,6 +347,13 @@ class HazardEngine:
             else 0
         )
 
+        if activation_queue_ahead is not None:
+            if activation_queue_ahead < 0:
+                raise ValueError(
+                    "activation_queue_ahead must be non-negative"
+                )
+            queue_ahead = activation_queue_ahead
+
         start_execution_volume = (
             level.execution_volume
         )
@@ -385,6 +395,7 @@ class HazardEngine:
             required_execution_volume=(
                 required_execution_volume
             ),
+            queue_ahead_at_activation=queue_ahead,
         )
 
         candidate_id = candidate.candidate_id
@@ -486,6 +497,94 @@ class HazardEngine:
                 current_mid,
                 fill_resolution_message_index=message_index,
                 fill_resolution_type="execution",
+            )
+
+    def register_cancellation(
+        self,
+        stock_locate: int,
+        resting_side: str,
+        price: int,
+        cancelled_shares: int,
+        order_added_message_index: int | None,
+    ) -> None:
+        """
+        Reduce the simulated queue threshold when shares are
+        cancelled from an order that was ahead at activation.
+
+        Shares cancelled from orders added after the candidate's
+        activation do not reduce its queue-ahead estimate.
+        """
+        if cancelled_shares <= 0:
+            return
+
+        if order_added_message_index is None:
+            return
+
+        key = self.level_key(
+            stock_locate,
+            resting_side,
+            price,
+        )
+
+        level = self.level(key)
+        heap = self.fill_heaps[key]
+
+        for candidate_id in list(self.active_by_level[key]):
+            candidate = self.candidates.get(candidate_id)
+
+            if candidate is None or candidate.status != "ACTIVE":
+                continue
+
+            if candidate.level_epoch != level.epoch:
+                continue
+
+            # Only orders already present when the hypothetical
+            # candidate was activated can have been ahead of it.
+            if candidate.source_event_id is None:
+                continue
+
+            if order_added_message_index > candidate.source_event_id:
+                continue
+
+            executed_since_start = max(
+                0,
+                level.execution_volume
+                - candidate.start_execution_volume,
+            )
+
+            remaining_queue_ahead = max(
+                0,
+                candidate.queue_ahead_current
+                - executed_since_start,
+            )
+
+            # Do not count cancellations of historical shares
+            # that would already have been behind our simulated order.
+            queue_reduction = min(
+                cancelled_shares,
+                remaining_queue_ahead,
+            )
+
+            if queue_reduction <= 0:
+                continue
+
+            candidate.queue_ahead_current -= queue_reduction
+
+            candidate.required_execution_volume = (
+                candidate.start_execution_volume
+                + candidate.queue_ahead_current
+                + candidate.quote_qty
+                - candidate.filled_qty
+            )
+
+            # Push the updated threshold. The old heap entry may
+            # remain, but status checks make stale entries harmless.
+            heapq.heappush(
+                heap,
+                (
+                    candidate.required_execution_volume,
+                    candidate.candidate_id,
+                ),
             )
 
     def handle_level_reset(
@@ -1014,6 +1113,9 @@ def candidate_to_row(
         "queue_ahead_initial": (
             candidate.queue_ahead_initial
         ),
+        "queue_ahead_at_activation": (
+            candidate.queue_ahead_at_activation
+        ),
         "filled_qty": candidate.filled_qty,
         "fill_fraction": (
             candidate.filled_qty
@@ -1199,6 +1301,11 @@ def run(
         m9.BookState,
     ] = {}
     next_sample_ns: dict[int, int] = {}
+    # Track the original ITCH add-message index for each resting order.
+    order_add_message_index: dict[
+        tuple[int, int],
+        int,
+    ] = {}
 
     engine = HazardEngine()
 
@@ -1434,31 +1541,59 @@ def run(
                         shares=shares,
                         price=price,
                     )
+                    order_add_message_index[
+                        (stock_locate, order_ref)
+                    ] = message_count
 
             elif message_type == "D":
-                order_ref = (
-                    m9.parse_order_ref(msg)
-                )
-
-                book.remove_order(
-                    order_ref
-                )
+                order_ref = m9.parse_order_ref(msg)
+                order_key = (stock_locate, order_ref)
+                existing = book.orders.get(order_ref)
+                if existing is not None:
+                    engine.register_cancellation(
+                        stock_locate=stock_locate,
+                        resting_side=existing.side,
+                        price=existing.price,
+                        cancelled_shares=existing.shares,
+                        order_added_message_index=(
+                            order_add_message_index.get(order_key)
+                        ),
+                    )
+                removed = book.remove_order(order_ref)
+                if removed is not None:
+                    order_add_message_index.pop(order_key, None)
 
             elif message_type == "X":
-                order_ref = (
-                    m9.parse_order_ref(msg)
-                )
-
+                order_ref = m9.parse_order_ref(msg)
+                order_key = (stock_locate, order_ref)
                 cancelled_shares = int.from_bytes(
                     msg[19:23],
                     "big",
                 )
+
+                existing = book.orders.get(order_ref)
+                if existing is not None:
+                    actual_cancelled = min(
+                        cancelled_shares,
+                        existing.shares,
+                    )
+                    engine.register_cancellation(
+                        stock_locate=stock_locate,
+                        resting_side=existing.side,
+                        price=existing.price,
+                        cancelled_shares=actual_cancelled,
+                        order_added_message_index=(
+                            order_add_message_index.get(order_key)
+                        ),
+                    )
 
                 cancel_order(
                     book,
                     order_ref,
                     cancelled_shares,
                 )
+                if order_ref not in book.orders:
+                    order_add_message_index.pop(order_key, None)
 
             elif message_type in {"E", "C"}:
                 order_ref = int.from_bytes(
@@ -1484,12 +1619,28 @@ def run(
                     price,
                 ) = m9.parse_replace(msg)
 
-                book.replace_order(
+                original_key = (stock_locate, original_ref)
+                new_key = (stock_locate, new_ref)
+                existing = book.orders.get(original_ref)
+                if existing is not None:
+                    engine.register_cancellation(
+                        stock_locate=stock_locate,
+                        resting_side=existing.side,
+                        price=existing.price,
+                        cancelled_shares=existing.shares,
+                        order_added_message_index=(
+                            order_add_message_index.get(original_key)
+                        ),
+                    )
+                replaced = book.replace_order(
                     original_ref,
                     new_ref,
                     shares,
                     price,
                 )
+                if replaced is not None:
+                    order_add_message_index.pop(original_key, None)
+                    order_add_message_index[new_key] = message_count
 
             post_state = book.snapshot()
 
@@ -1572,6 +1723,7 @@ def run(
                             if post_state is not None
                             else None
                         ),
+                        message_index=message_count,
                     )
 
             # Existing candidates see this post-event midpoint.
@@ -1713,11 +1865,16 @@ def run(
                         delta_spread=delta_spread,
                         pre_level_epoch=bid_epoch,
                         source_event_id=message_count,
+                        activation_queue_ahead=book.bids.get(
+                            bid_price,
+                            0,
+                        ),
                     )
                     candidate_count += 1
 
                 if "SELL" in sample_quotes:
                     ask_price, ask_epoch = sample_quotes["SELL"]
+
                     engine.create_candidate(
                         timestamp_ns=timestamp_ns,
                         symbol=symbol,
@@ -1731,8 +1888,13 @@ def run(
                         delta_spread=delta_spread,
                         pre_level_epoch=ask_epoch,
                         source_event_id=message_count,
+                        activation_queue_ahead=book.asks.get(
+                            ask_price,
+                            0,
+                        ),
                     )
-                    candidate_count += 1
+
+                    candidate_count += 1    
 
                 if sampling_mode == "time":
                     previous_sample_state[stock_locate] = sample_state
