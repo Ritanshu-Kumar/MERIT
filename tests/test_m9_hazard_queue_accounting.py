@@ -182,6 +182,25 @@ def test_cancellation_of_later_order_does_not_reduce_queue() -> None:
     execute(engine, shares=1, message_index=202)
     assert candidate.status == "FILL"
 
+
+def test_order_added_by_activation_event_is_not_ahead() -> None:
+    engine = HazardEngine()
+    candidate = create_buy_candidate(
+        engine,
+        activation_queue_ahead=100,
+        displayed_bid_size=100,
+    )
+    engine.register_cancellation(
+        stock_locate=STOCK_LOCATE,
+        resting_side="B",
+        price=QUOTE_PRICE,
+        cancelled_shares=40,
+        order_added_message_index=123,
+    )
+    assert candidate.queue_ahead_current == 100
+    assert candidate.required_execution_volume == 200
+
+
 def test_cancellation_after_partial_queue_consumption() -> None:
     engine = HazardEngine()
 

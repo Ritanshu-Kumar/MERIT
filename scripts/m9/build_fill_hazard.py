@@ -35,12 +35,32 @@ MARKOUT_HORIZONS_NS = {
     "5s": 5_000_000_000,
 }
 
+BOOK_UPDATE_TYPES = frozenset({"A", "F", "D", "X", "E", "C", "U"})
+
+
+def advance_sample_grid(
+    next_due_ns: int,
+    current_timestamp_ns: int,
+    interval_ns: int,
+) -> tuple[list[int], int]:
+    """Return scheduled times strictly before the current event."""
+    if interval_ns <= 0:
+        raise ValueError("interval_ns must be positive")
+    due_times = []
+    while next_due_ns < current_timestamp_ns:
+        due_times.append(next_due_ns)
+        next_due_ns += interval_ns
+    return due_times, next_due_ns
+
+
 OUTPUT_COLUMNS = [
     "candidate_id",
     "event_id",
     "cluster_id",
     "cluster_size",
     "timestamp_ns",
+    "snapshot_timestamp_ns",
+    "snapshot_age_ns",
     "symbol",
     "stock_locate",
     "quote_side",
@@ -117,6 +137,7 @@ class Candidate:
     adverse_threshold: float
     source_event_id: int | None = None
     queue_ahead_at_activation: int | None = None
+    snapshot_timestamp_ns: int | None = None
 
     level_resets: int = 0
     status: str = "ACTIVE"
@@ -304,6 +325,7 @@ class HazardEngine:
         pre_level_epoch: int,
         source_event_id: int | None = None,
         activation_queue_ahead: int | None = None,
+        snapshot_timestamp_ns: int | None = None,
     ) -> None:
         resting_side = (
             "B"
@@ -396,6 +418,7 @@ class HazardEngine:
                 required_execution_volume
             ),
             queue_ahead_at_activation=queue_ahead,
+            snapshot_timestamp_ns=snapshot_timestamp_ns,
         )
 
         candidate_id = candidate.candidate_id
@@ -543,7 +566,7 @@ class HazardEngine:
             if candidate.source_event_id is None:
                 continue
 
-            if order_added_message_index > candidate.source_event_id:
+            if order_added_message_index >= candidate.source_event_id:
                 continue
 
             executed_since_start = max(
@@ -1089,6 +1112,12 @@ def candidate_to_row(
         "cluster_id": f"{candidate.symbol}:{candidate.timestamp_ns}",
         "cluster_size": None,
         "timestamp_ns": candidate.timestamp_ns,
+        "snapshot_timestamp_ns": candidate.snapshot_timestamp_ns,
+        "snapshot_age_ns": (
+            candidate.timestamp_ns - candidate.snapshot_timestamp_ns
+            if candidate.snapshot_timestamp_ns is not None
+            else None
+        ),
         "symbol": candidate.symbol,
         "stock_locate": candidate.stock_locate,
         "quote_side": candidate.quote_side,
@@ -1301,6 +1330,7 @@ def run(
         m9.BookState,
     ] = {}
     next_sample_ns: dict[int, int] = {}
+    latest_book_timestamp_ns: dict[int, int] = {}
     # Track the original ITCH add-message index for each resting order.
     order_add_message_index: dict[
         tuple[int, int],
@@ -1366,21 +1396,8 @@ def run(
             last_timestamp_ns = timestamp_ns
 
             pre_state = book.snapshot()
-
-            # Candidates whose exact one-second horizon has
-            # already passed cannot interact with this event.
-            engine.resolve_timeouts_before(
-                timestamp_ns,
-                current_mid=(
-                    pre_state.mid
-                    if pre_state is not None
-                    else None
-                ),
-            )
-
-            completed_count += write_completed(
-                writer,
-                engine,
+            pre_snapshot_timestamp_ns = latest_book_timestamp_ns.get(
+                stock_locate
             )
 
             # Save the exact pre-event best quote and level epochs.
@@ -1416,6 +1433,103 @@ def run(
                         best_ask,
                         engine.level(key).epoch,
                     )
+
+            # Time-mode candidates use the prior available book state.
+            # Their timestamp records the logical grid decision time.
+            if (
+                sampling_mode == "time"
+                and pre_state is not None
+                and pre_snapshot_timestamp_ns is not None
+            ):
+                if stock_locate not in next_sample_ns:
+                    next_sample_ns[stock_locate] = (
+                        pre_snapshot_timestamp_ns
+                        + sampling_interval_ns
+                    )
+                due_times, next_due = advance_sample_grid(
+                    next_sample_ns[stock_locate],
+                    timestamp_ns,
+                    sampling_interval_ns,
+                )
+                next_sample_ns[stock_locate] = next_due
+                for decision_ns in due_times:
+                    previous = previous_sample_state.get(stock_locate)
+                    if previous is None:
+                        delta_imbalance = 0.0
+                        delta_microprice = 0.0
+                        delta_spread = 0.0
+                    else:
+                        delta_imbalance = (
+                            pre_state.imbalance - previous.imbalance
+                        )
+                        delta_microprice = (
+                            pre_state.microprice - previous.microprice
+                        )
+                        delta_spread = pre_state.spread - previous.spread
+
+                    if "BUY" in pre_quotes:
+                        bid_price, bid_epoch = pre_quotes["BUY"]
+                        engine.create_candidate(
+                            timestamp_ns=decision_ns,
+                            symbol=symbol,
+                            stock_locate=stock_locate,
+                            quote_side="BUY",
+                            quote_price=bid_price,
+                            quote_qty=QUOTE_QTY,
+                            state=pre_state,
+                            delta_imbalance=delta_imbalance,
+                            delta_microprice=delta_microprice,
+                            delta_spread=delta_spread,
+                            pre_level_epoch=bid_epoch,
+                            source_event_id=message_count,
+                            activation_queue_ahead=book.bids.get(
+                                bid_price,
+                                0,
+                            ),
+                            snapshot_timestamp_ns=pre_snapshot_timestamp_ns,
+                        )
+                        candidate_count += 1
+
+                    if "SELL" in pre_quotes:
+                        ask_price, ask_epoch = pre_quotes["SELL"]
+                        engine.create_candidate(
+                            timestamp_ns=decision_ns,
+                            symbol=symbol,
+                            stock_locate=stock_locate,
+                            quote_side="SELL",
+                            quote_price=ask_price,
+                            quote_qty=QUOTE_QTY,
+                            state=pre_state,
+                            delta_imbalance=delta_imbalance,
+                            delta_microprice=delta_microprice,
+                            delta_spread=delta_spread,
+                            pre_level_epoch=ask_epoch,
+                            source_event_id=message_count,
+                            activation_queue_ahead=book.asks.get(
+                                ask_price,
+                                0,
+                            ),
+                            snapshot_timestamp_ns=pre_snapshot_timestamp_ns,
+                        )
+                        candidate_count += 1
+
+                    previous_sample_state[stock_locate] = pre_state
+
+            # Candidates whose exact one-second horizon has
+            # already passed cannot interact with this event.
+            engine.resolve_timeouts_before(
+                timestamp_ns,
+                current_mid=(
+                    pre_state.mid
+                    if pre_state is not None
+                    else None
+                ),
+            )
+
+            completed_count += write_completed(
+                writer,
+                engine,
+            )
 
             # Capture the order involved in the current message
             # before mutating the book.
@@ -1649,6 +1763,15 @@ def run(
                     timestamp_ns,
                     post_state.mid,
                 )
+                if message_type in BOOK_UPDATE_TYPES:
+                    latest_book_timestamp_ns[stock_locate] = timestamp_ns
+                    if (
+                        sampling_mode == "time"
+                        and stock_locate not in next_sample_ns
+                    ):
+                        next_sample_ns[stock_locate] = (
+                            timestamp_ns + sampling_interval_ns
+                        )
 
             engine.resolve_post_fill_markouts(
                 stock_locate=stock_locate,
@@ -1754,8 +1877,8 @@ def run(
             )
 
             # -------------------------------------------------------
-            # Create candidates either from execution-triggered
-            # pre-event state or on the scheduled time grid.
+            # Create execution-triggered candidates from pre-event
+            # state; time-mode candidates were created before the event.
             # -------------------------------------------------------
             should_sample = False
             sample_state: m9.BookState | None = None
@@ -1775,61 +1898,6 @@ def run(
                         stock_locate
                     )
                     previous_execution_state[stock_locate] = pre_state
-            else:
-                book_update = message_type in {
-                    "A",
-                    "F",
-                    "D",
-                    "X",
-                    "E",
-                    "C",
-                    "U",
-                }
-                next_due = next_sample_ns.get(
-                    stock_locate,
-                    timestamp_ns,
-                )
-                if (
-                    book_update
-                    and post_state is not None
-                    and timestamp_ns >= next_due
-                ):
-                    should_sample = True
-                    sample_state = post_state
-                    previous = previous_sample_state.get(
-                        stock_locate
-                    )
-                    elapsed_intervals = (
-                        (timestamp_ns - next_due)
-                        // sampling_interval_ns
-                    ) + 1
-                    next_sample_ns[stock_locate] = (
-                        next_due
-                        + elapsed_intervals * sampling_interval_ns
-                    )
-
-                    best_bid = book.best_bid()
-                    best_ask = book.best_ask()
-                    if best_bid is not None:
-                        key = engine.level_key(
-                            stock_locate,
-                            "B",
-                            best_bid,
-                        )
-                        sample_quotes["BUY"] = (
-                            best_bid,
-                            engine.level(key).epoch,
-                        )
-                    if best_ask is not None:
-                        key = engine.level_key(
-                            stock_locate,
-                            "S",
-                            best_ask,
-                        )
-                        sample_quotes["SELL"] = (
-                            best_ask,
-                            engine.level(key).epoch,
-                        )
 
             if should_sample and sample_state is not None:
                 if previous is None:
@@ -1869,6 +1937,7 @@ def run(
                             bid_price,
                             0,
                         ),
+                        snapshot_timestamp_ns=pre_snapshot_timestamp_ns,
                     )
                     candidate_count += 1
 
@@ -1892,12 +1961,10 @@ def run(
                             ask_price,
                             0,
                         ),
+                        snapshot_timestamp_ns=pre_snapshot_timestamp_ns,
                     )
 
-                    candidate_count += 1    
-
-                if sampling_mode == "time":
-                    previous_sample_state[stock_locate] = sample_state
+                    candidate_count += 1
 
             if (
                 message_count % 5_000_000
