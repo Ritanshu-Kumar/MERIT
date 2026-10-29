@@ -35,3 +35,31 @@ dist/
 Thumbs.db
 .vscode/
 .idea/
+
+# Generated research outputs are ignored by default.
+# Only curated summaries and reports are retained in Git.
+ /research/*
+!/research/*.md
+
+# Regular-session markout summaries
+!/research/m9_regular_fill_markout_summary.csv
+!/research/m9_regular_markout_block_bootstrap.csv
+!/research/m9_regular_markout_freshness_sensitivity.csv
+!/research/m9_2019-08-30_regular_fill_markout_summary.csv
+!/research/m9_2019-08-30_regular_markout_block_bootstrap.csv
+!/research/m9_2019-08-30_regular_markout_freshness_sensitivity.csv
+!/research/m9_two_date_one_second_comparison.csv
+
+# Cross-date economic evaluation
+!/research/m9_cross_date_economic_summary.csv
+!/research/m9_cross_date_economic_differences.csv
+!/research/m9_cross_date_economic_summary_activity_matched.csv
+!/research/m9_cross_date_economic_differences_activity_matched.csv
+
+# Candidate-level diagnostic summaries
+!/research/m9_candidate_audit_group_summary.csv
+!/research/m9_candidate_audit_fill_markouts.csv
+!/research/m9_candidate_audit_by_symbol_side.csv
+!/research/m9_candidate_audit_activity_matched.csv
+!/research/m9_candidate_audit_economics_by_symbol_side.csv
+!/research/m9_candidate_score_deciles_by_symbol_side.csv
