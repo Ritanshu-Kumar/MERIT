@@ -1,6 +1,10 @@
 import pytest
 
 from scripts.m9.build_fill_hazard import advance_sample_grid
+from scripts.m9.build_fill_hazard import (
+    advance_sample_grid,
+    filter_decisions_to_asof_snapshot,
+)
 
 
 def test_delayed_event_preserves_fixed_grid() -> None:
@@ -40,3 +44,26 @@ def test_non_positive_interval_is_rejected() -> None:
             current_timestamp_ns=2_000,
             interval_ns=0,
         )
+
+def test_backfilled_decisions_before_snapshot_are_dropped():
+    due_times = [1000, 2000, 3000]
+
+    assert filter_decisions_to_asof_snapshot(
+        due_times, 2500
+    ) == [3000]
+
+
+def test_decision_equal_to_snapshot_timestamp_is_retained():
+    due_times = [1000, 2000, 3000]
+
+    assert filter_decisions_to_asof_snapshot(
+        due_times, 2000
+    ) == [2000, 3000]
+
+
+def test_no_decisions_are_dropped_when_snapshot_is_older():
+    due_times = [1000, 2000, 3000]
+
+    assert filter_decisions_to_asof_snapshot(
+        due_times, 500
+    ) == due_times

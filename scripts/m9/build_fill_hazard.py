@@ -52,6 +52,17 @@ def advance_sample_grid(
         next_due_ns += interval_ns
     return due_times, next_due_ns
 
+def filter_decisions_to_asof_snapshot(
+    decision_times: list[int],
+    snapshot_timestamp_ns: int,
+) -> list[int]:
+    """Discard scheduled decisions earlier than the available snapshot."""
+    return [
+        decision_ns
+        for decision_ns in decision_times
+        if decision_ns >= snapshot_timestamp_ns
+    ]
+
 
 OUTPUT_COLUMNS = [
     "candidate_id",
@@ -1452,6 +1463,10 @@ def run(
                     sampling_interval_ns,
                 )
                 next_sample_ns[stock_locate] = next_due
+                due_times = filter_decisions_to_asof_snapshot(
+                    due_times,
+                    pre_snapshot_timestamp_ns,
+                )
                 for decision_ns in due_times:
                     previous = previous_sample_state.get(stock_locate)
                     if previous is None:
